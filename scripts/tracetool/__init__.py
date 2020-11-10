@@ -195,7 +195,7 @@ class Event(object):
             raise ValueError("Event '%s' has more than maximum permitted "
                              "argument count" % name)
 
-        if orig is None:
+        if orig == None:
             self.original = weakref.ref(self)
         else:
             self.original = orig
@@ -275,7 +275,7 @@ class Event(object):
     QEMU_EVENT               = "_TRACE_%(NAME)s_EVENT"
 
     def api(self, fmt=None):
-        if fmt is None:
+        if fmt == None:
             fmt = Event.QEMU_TRACE
         return fmt % {"name": self.name, "NAME": self.name.upper()}
 
@@ -393,12 +393,12 @@ def generate(events, group, format, backends,
     import tracetool
 
     format = str(format)
-    if len(format) is 0:
+    if len(format) == 0:
         raise TracetoolError("format not set")
     if not tracetool.format.exists(format):
         raise TracetoolError("unknown format: %s" % format)
 
-    if len(backends) is 0:
+    if len(backends) == 0:
         raise TracetoolError("no backends specified")
     for backend in backends:
         if not tracetool.backend.exists(backend):

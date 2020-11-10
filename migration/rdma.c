@@ -3348,9 +3348,9 @@ static int qemu_rdma_registration_handle(QEMUFile *f, void *opaque)
                 }
                 chunk_start = ram_chunk_start(block, chunk);
                 chunk_end = ram_chunk_end(block, chunk + reg->chunks);
-                uint32_t rkey = reg_result->rkey;
+                uint32_t reg_key = reg_result->rkey;
                 if (qemu_rdma_register_and_get_keys(rdma, block,
-                            (uintptr_t)host_addr, NULL, &rkey,
+                            (uintptr_t)host_addr, NULL, &reg_key,
                             chunk, chunk_start, chunk_end)) {
                     error_report("cannot get rkey");
                     ret = -EINVAL;

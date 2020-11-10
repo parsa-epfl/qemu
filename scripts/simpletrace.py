@@ -36,7 +36,7 @@ def read_header(fobj, hfmt):
 def get_record(edict, idtoname, rechdr, fobj):
     """Deserialize a trace record from a file into a tuple
        (name, timestamp, pid, arg1, ..., arg6)."""
-    if rechdr is None:
+    if rechdr == None:
         return None
     if rechdr[0] != dropped_event_id:
         event_id = rechdr[0]
