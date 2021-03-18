@@ -8,8 +8,6 @@
  *
  */
 
-#include <glib/gprintf.h>
-
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "hw/ptimer.h"

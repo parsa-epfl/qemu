@@ -115,21 +115,3 @@ void qemu_devices_reset(void)
         re->func(re->opaque);
     }
 }
-
-#ifdef CONFIG_EXTSNAP
-void qemu_cache_reset(void)
-{
-    QEMUResetEntry *re, *nre;
-    cpu_synchronize_all_states();
-
-        /* reset all devices */
-        QTAILQ_FOREACH_SAFE(re, &reset_handlers, entry, nre) {
-        if (re->func == rom_reset)
-        rom_cache_reset();
-    else
-            re->func(re->opaque);
-       }
-
-    cpu_synchronize_all_post_reset();
-}
-#endif
