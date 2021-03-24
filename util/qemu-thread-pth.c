@@ -505,7 +505,7 @@ static int threadlist_size;
 void initMainThread(void)
 {
     if (!threadlist_initialized){
-	      get_main_thread(); // FIXME: Does this need to be here??
+	      get_main_thread();
         threadlist* head = calloc(1, sizeof(threadlist));
         head->qemuthread = calloc(1, sizeof(QemuThread));
         head->qemuthread->wrapper.pth_thread = pth_self();
