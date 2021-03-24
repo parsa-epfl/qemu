@@ -835,6 +835,10 @@ int main(int argc, char **argv)
     Error *local_error = NULL;
     GSource *src;
 
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
+
     init_clocks(NULL);
 
     ctx = aio_context_new(&local_error);

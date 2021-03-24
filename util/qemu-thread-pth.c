@@ -505,6 +505,7 @@ static int threadlist_size;
 void initMainThread(void)
 {
     if (!threadlist_initialized){
+	      get_main_thread(); // FIXME: Does this need to be here??
         threadlist* head = calloc(1, sizeof(threadlist));
         head->qemuthread = calloc(1, sizeof(QemuThread));
         head->qemuthread->wrapper.pth_thread = pth_self();
@@ -521,8 +522,6 @@ void qemu_thread_create(QemuThread *thread, const char *name,
                        void *(*start_routine)(void*),
                        void *arg, int mode)
 {
-	get_main_thread(); // FIXME: Does this need to be here??
-
     /* For compliance with the rest of QEMU's code, make a heap-allocated copy of *thread
      * that doesn't go out of scope when placed into a pth wrapper
      */
