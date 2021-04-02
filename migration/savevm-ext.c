@@ -574,11 +574,11 @@ static int load_state_ext(QString *dir_path)
     ioc = QIO_CHANNEL(qio_channel_command_new_spawn(argv,
                                                     O_RDONLY,
                                                     &local_err));
-    qio_channel_set_name(ioc, "loadvm-exec-incoing");
     if (!ioc) {
         error_report("Could not open VM state file's channel\n");
         goto end;
     }
+    qio_channel_set_name(ioc, "loadvm-exec-incoming");
 
     f = qemu_fopen_channel_input(ioc);
     if (!f) {
