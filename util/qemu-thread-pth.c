@@ -558,7 +558,9 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     err = pthpthread_create(&thread->wrapper.pth_thread, &attr, start_routine, arg);
     if (err)
         error_exit(err, __func__);
-    thread->wrapper.thread_name = strdup(name);
+
+    if (name) 
+        thread->wrapper.thread_name = strdup(name);
 
     /* Make a heap-allocated copy of *thread that doesn't go out of scope when placed into a pth wrapper,
      * and then insert it into the PTH wrapper data structures
