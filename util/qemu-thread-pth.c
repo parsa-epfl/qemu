@@ -522,12 +522,6 @@ void qemu_thread_create(QemuThread *thread, const char *name,
                        void *(*start_routine)(void*),
                        void *arg, int mode)
 {
-    /* For compliance with the rest of QEMU's code, make a heap-allocated copy of *thread
-     * that doesn't go out of scope when placed into a pth wrapper
-     */
-    QemuThread *thread_pth_copy = g_malloc0(sizeof(QemuThread));
-    memcpy(thread_pth_copy,thread,sizeof(QemuThread));
-
     sigset_t set, oldset;
     int err;
 
@@ -550,19 +544,6 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     sigfillset(&set);
     pthpthread_sigmask(SIG_SETMASK, &set, &oldset);
 
-
-    /***********************************************/
-    // THREAD LIST
-    initMainThread();
-
-    threadlist* head = calloc(1, sizeof(threadlist));
-    head->qemuthread = thread_pth_copy;
-    head->qemuthread->wrapper.thread_name = strdup(name);
-    memset(&head->qemuthread->wrapper.rcu_reader, 0, sizeof(struct rcu_reader_data));
-    threadlist_size++;
-    QLIST_INSERT_HEAD(&pth_wrappers, head, next);
-    /***********************************************/
-
     if (name_threads) {
         pth_attr_set((pth_attr_t)attr, PTH_ATTR_NAME, name);
     }
@@ -574,11 +555,26 @@ void qemu_thread_create(QemuThread *thread, const char *name,
         }
     }
 
-    err = pthpthread_create(&thread_pth_copy->wrapper.pth_thread, &attr, start_routine, arg);
+    err = pthpthread_create(&thread->wrapper.pth_thread, &attr, start_routine, arg);
     if (err)
         error_exit(err, __func__);
+    thread->wrapper.thread_name = strdup(name);
 
-    PTH_YIELD
+    /* Make a heap-allocated copy of *thread that doesn't go out of scope when placed into a pth wrapper,
+     * and then insert it into the PTH wrapper data structures
+     */
+    initMainThread(); // in case user has not explicitly called init yet
+
+    QemuThread *thread_pth_copy = g_malloc0(sizeof(QemuThread));
+    memcpy(thread_pth_copy,thread,sizeof(QemuThread));
+
+    threadlist* head = calloc(1, sizeof(threadlist));
+    head->qemuthread = thread_pth_copy;
+    memset(&head->qemuthread->wrapper.rcu_reader, 0, sizeof(struct rcu_reader_data));
+    threadlist_size++;
+    QLIST_INSERT_HEAD(&pth_wrappers, head, next);
+
+    //PTH_YIELD // TODO: is this mandatory??
 
     pthpthread_sigmask(SIG_SETMASK, &oldset, NULL);
 
