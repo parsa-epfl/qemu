@@ -440,6 +440,10 @@ int main(int argc, char **argv)
 {
     init_clocks(NULL);
 
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
+
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/aio/multi/lifecycle", test_lifecycle);
     if (g_test_quick()) {
