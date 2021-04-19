@@ -109,6 +109,9 @@ typedef struct pth_wrapper
     int have_tb_lock;
 
     char* thread_name;
+
+    // thread ID utilized for unit tests
+    int id;
 }pth_wrapper;
 
 typedef struct  pthpthread_st              *pthpthread_t;
