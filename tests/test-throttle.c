@@ -737,6 +737,9 @@ static void test_groups(void)
 int main(int argc, char **argv)
 {
     qemu_init_main_loop(&error_fatal);
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
     ctx = qemu_get_aio_context();
     bdrv_init();
     module_call_init(MODULE_INIT_QOM);

@@ -317,6 +317,7 @@ void coroutine_fn qemu_co_mutex_unlock(CoMutex *mutex)
     self->locks_held--;
     if (atomic_fetch_dec(&mutex->locked) == 1) {
         /* No waiting qemu_co_mutex_lock().  Pfew, that was easy!  */
+      PTH_YIELD;
         return;
     }
 
@@ -354,6 +355,7 @@ void coroutine_fn qemu_co_mutex_unlock(CoMutex *mutex)
         }
     }
 
+      PTH_YIELD;
     trace_qemu_co_mutex_unlock_return(mutex, self);
 }
 

@@ -97,6 +97,7 @@ void qemu_mutex_lock(QemuMutex *mutex)
     err = pthpthread_mutex_lock(&mutex->lock);
     if (err)
         error_exit(err, __func__);
+    PTH_YIELD;
 }
 
 int qemu_mutex_trylock(QemuMutex *mutex)

@@ -165,7 +165,7 @@ static void do_test_cancel(bool sync)
      * testing on the behavior of the scheduler...
      */
     g_assert_cmpint(active, ==, 100);
-    g_usleep(1000000);
+    pth_usleep(1000000);
     g_assert_cmpint(active, >, 50);
 
     /* Cancel the jobs that haven't been started yet.  */
@@ -184,6 +184,7 @@ static void do_test_cancel(bool sync)
     g_assert_cmpint(active, >, 0);
     g_assert_cmpint(num_canceled, <, 100);
 
+    fprintf(stderr,"cancelled all 100\n");
     for (i = 0; i < 100; i++) {
         if (data[i].aiocb && data[i].n != 3) {
             if (sync) {
@@ -197,6 +198,7 @@ static void do_test_cancel(bool sync)
 
     /* Finish execution and execute any remaining callbacks.  */
     while (active > 0) {
+        fprintf(stderr,"active %d",active);
         aio_poll(ctx, true);
     }
     g_assert_cmpint(active, ==, 0);
@@ -227,6 +229,9 @@ int main(int argc, char **argv)
     int ret;
 
     qemu_init_main_loop(&error_abort);
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
     ctx = qemu_get_current_aio_context();
     pool = aio_get_thread_pool(ctx);
 

@@ -179,7 +179,7 @@ static void test_multi_co_schedule(int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    g_usleep(seconds * 1000000);
+    pth_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     for (i = 0; i < NUM_CONTEXTS; i++) {
@@ -244,11 +244,11 @@ static void test_multi_co_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    g_usleep(seconds * 1000000);
+    pth_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        g_usleep(100000);
+        pth_usleep(100000);
     }
 
     join_aio_contexts();
@@ -322,6 +322,7 @@ static void mcs_mutex_unlock(void)
         if (atomic_read(&mutex_head) == PTH(id) &&
             atomic_cmpxchg(&mutex_head, PTH(id), -1) == PTH(id)) {
             /* Last item in the list, exit.  */
+          PTH_YIELD;
             return;
         }
         while (atomic_read(&nodes[PTH(id)].next) == -1) {
@@ -335,6 +336,7 @@ static void mcs_mutex_unlock(void)
     next = atomic_read(&nodes[PTH(id)].next);
     nodes[next].locked = 0;
     qemu_futex_wake(&nodes[next].locked, 1);
+    PTH_YIELD;
 }
 
 static void test_multi_fair_mutex_entry(void *opaque)
@@ -365,11 +367,11 @@ static void test_multi_fair_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    g_usleep(seconds * 1000000);
+    pth_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        g_usleep(100000);
+        pth_usleep(100000);
     }
 
     join_aio_contexts();
@@ -421,11 +423,11 @@ static void test_multi_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    g_usleep(seconds * 1000000);
+    pth_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        g_usleep(100000);
+        pth_usleep(100000);
     }
 
     join_aio_contexts();
