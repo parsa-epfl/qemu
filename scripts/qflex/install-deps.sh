@@ -38,6 +38,7 @@ sudo apt-get update && \
         libpthread-stubs0-dev \
         gcc-aarch64-linux-gnu \
         libc6-dev-arm64-cross \
+        gdb-multiarch \
         libiscsi-dev
 
 # Install meson as root
