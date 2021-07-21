@@ -41,7 +41,7 @@ jobs:
           - build-name: Build for system-mode with clang + check-tcg, check-qtest + UBSAN, ASAN # clang-system
             targets: aarch64-softmmu
             configure-args: --cc=clang --cxx=clang++
-              --extra-cflags=-fsanitize=undefined --extra-cflags=-fsanitize=address  --extra-cflags=-fno-sanitize-recover=undefined
+              --extra-cflags=-fsanitize=undefined --extra-cflags=-fno-sanitize-recover=undefined
             make-check-args: check-qtest check-tcg
           - build-name: Build for user-mode with clang + check-tcg, check-unit + UBSAN, ASAN # clang-user
             targets: aarch64-linux-user
