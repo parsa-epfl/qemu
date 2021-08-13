@@ -109,11 +109,8 @@
 
 #include "benchmark.h"
 
-//const char *input_command = "cat";
-//const char *output_command = "cat";
-
-const char *input_command = "pigz -d -c";
-const char *output_command = "pigz -c";
+const char *input_command = "pbzip2 -d -c";
+const char *output_command = "pbzip2 -c";
 
 FILE *savedump = NULL;
 FILE *loaddump = NULL;

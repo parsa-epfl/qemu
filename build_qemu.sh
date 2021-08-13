@@ -130,7 +130,7 @@ if [ "${INSTALL_DEPS}" = "TRUE" ]; then
         sudo apt-get update -qq
         sudo apt-get install -y build-essential python-dev software-properties-common pkg-config \
             zip zlib1g-dev unzip libbz2-dev \
-            expect bridge-utils uml-utilities pigz
+            expect bridge-utils uml-utilities pbzip2
         # Install known-good version of gcc-8
         GCC_VERSION="8"
         sudo apt-get install -y gcc-${GCC_VERSION} g++-${GCC_VERSION}
