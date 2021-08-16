@@ -18,8 +18,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - # NOTE: --enable-fdt=system --enable-slirp=system was removed
-            build-name: Build for Ubuntu 20.04 + check # build-system-ubuntu
+          - build-name: Build for Ubuntu 20.04 + check # build-system-ubuntu # NOTE: --enable-fdt=system --enable-slirp=system was removed compared to upstream QEMU job def
             targets: aarch64-softmmu
             make-check-args: check
           - build-name: Build for user-mode + check-tcg # build-user
@@ -30,26 +29,19 @@ jobs:
             targets: aarch64-softmmu
             configure-args: --disable-tools --enable-debug
             make-check-args: check-tcg
-#          - build-name: build-user-plugins
-#            targets: aarch64-linux-user
-#            configure-args: --disable-tools --disable-system --enable-plugins --enable-debug-tcg
-#            make-check-args: check-tcg
           - build-name: Build for system-mode with plugins enabled + check-tcg # build-some-softmmu-plugins
             targets: aarch64-softmmu
             configure-args: --disable-tools --disable-user --enable-plugins --enable-debug-tcg
             make-check-args: check-tcg
           - build-name: Build for system-mode with clang + check-tcg, check-qtest + UBSAN, ASAN # clang-system
             targets: aarch64-softmmu
-            configure-args: --cc=clang --cxx=clang++
-              --extra-cflags=-fsanitize=undefined --extra-cflags=-fno-sanitize-recover=undefined
+            configure-args: --cc=clang --cxx=clang++ --enable-sanitizers --extra-cflags=-fno-sanitize-recover=undefined
             make-check-args: check-qtest check-tcg
           - build-name: Build for user-mode with clang + check-tcg, check-unit + UBSAN, ASAN # clang-user
             targets: aarch64-linux-user
-            configure-args: --cc=clang --cxx=clang++ --disable-system
-              --extra-cflags=-fsanitize=undefined --extra-cflags=-fsanitize=address --extra-cflags=-fno-sanitize-recover=undefined
+            configure-args: --cc=clang --cxx=clang++ --disable-system --enable-sanitizers --extra-cflags=-fno-sanitize-recover=undefined
             make-check-args: check-unit check-tcg
-          - # NOTE: removed --disable-pie because it results in compilation errors on ubuntu
-            build-name: Build with all features disabled + check-qtest # build-disabled
+          - build-name: Build with all features disabled + check-qtest # build-disabled # NOTE: removed --disable-pie because it results in compilation errors on ubuntu
             targets: aarch64-softmmu
             make-check-args: check-qtest SPEED=slow
             configure-args: 
