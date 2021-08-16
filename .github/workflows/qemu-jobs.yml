@@ -152,18 +152,20 @@ jobs:
              else
                ./configure --enable-werror --disable-docs --disable-containers $CONFIGURE_ARGS ;
              fi || { cd build && cat config.log meson-logs/meson-log.txt && exit 1; }
-      - name: Run meson configure LD_JOBS (conditional)
-        if: ${{ matrix.ld_jobs }}
+      - name: Run meson configure LD_JOBS
         run: if test -n "$LD_JOBS";
              then
                meson configure . -Dbackend_max_links="$LD_JOBS" ;
              fi || exit 1;
       - name: Make 
         run: make -j$(expr $(nproc) + 1)
-      - name: Run extra checks tests (conditional)
-        if: ${{ env.MAKE_CHECK_ARGS }}
-        run: make -j$(expr $(nproc) + 1) $MAKE_CHECK_ARGS ;
-        # NOTE: We tar the artifact before saving to keep file permissions
+      - name: Run check-build
+        run: make -j$(expr $(nproc) + 1) check-build ;
+      - name: Run extra checks tests
+        run: |
+          if [ ! -z "$MAKE_CHECK_ARGS" ]; then
+            ASAN_OPTIONS=detect_leaks=0 make -j$(expr $(nproc) + 1) $MAKE_CHECK_ARGS;
+          fi
       - name: Tar artifact (build folder) (conditional)
         if: ${{ matrix.upload-build == 'true'}}
         run: tar -cf build.tar build
