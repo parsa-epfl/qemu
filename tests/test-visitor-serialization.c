@@ -1119,7 +1119,7 @@ static const SerializeOps visitors[] = {
 static void add_visitor_type(const SerializeOps *ops)
 {
     char testname_prefix[128];
-    char testname[128];
+    char testname[256];
     TestArgs *args;
     int i = 0;
 
