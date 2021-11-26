@@ -28,7 +28,7 @@ static int long_cb(void *opaque)
 {
     WorkerTestData *data = opaque;
     atomic_inc(&data->n);
-    g_usleep(2000000);
+    pth_usleep(2000000);
     atomic_inc(&data->n);
     return 0;
 }
