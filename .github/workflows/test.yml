@@ -52,6 +52,7 @@ on:
   push:
     branches:
       - master
+      - gha_port
   pull_request:
     branches:
       - master
