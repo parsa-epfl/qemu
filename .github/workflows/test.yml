@@ -79,7 +79,7 @@ jobs:
         run: mv libqflex-checkout ../libqflex
       - name: Update submodules and install dependencies
         run: |
-          git submodule update --init --recursive \
+          git submodule update --init --recursive && \
           ./build_qemu.sh -install
       - name: Build QEMU
         run: ./build_qemu.sh -${MODE_TO_BUILD}
