@@ -70,6 +70,8 @@ jobs:
     steps:
       - name: Checkout QEMU
         uses: actions/checkout@v2
+        with:
+          submodules: recursive
       - name: Checkout libqflex dependency
         uses: actions/checkout@v2
         with:
