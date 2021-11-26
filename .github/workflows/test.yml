@@ -70,8 +70,6 @@ jobs:
     steps:
       - name: Checkout QEMU
         uses: actions/checkout@v2
-        with:
-          submodules: recursive
       - name: Checkout libqflex dependency
         uses: actions/checkout@v2
         with:
@@ -79,7 +77,9 @@ jobs:
           path: libqflex-checkout
       - name: Move libqflex to parent dir
         run: mv libqflex-checkout ../libqflex
-      - name: Install dependencies
-        run: ./build_qemu.sh -install
+      - name: Update submodules and install dependencies
+        run: |
+          git submodule update --init --recursive \
+          ./build_qemu.sh -install
       - name: Build QEMU
         run: ./build_qemu.sh -${MODE_TO_BUILD}
