@@ -78,6 +78,6 @@ jobs:
       - name: Move libqflex to parent dir
         run: mv libqflex-checkout ../libqflex
       - name: Install dependencies
-        run: ./tests/build_flexus.sh -install
+        run: ./build_flexus.sh -install
       - name: Build QEMU
-        run: ./tests/build_flexus.sh -${MODE_TO_BUILD}
+        run: ./build_flexus.sh -${MODE_TO_BUILD}
