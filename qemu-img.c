@@ -4745,6 +4745,10 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
+
     qcrypto_init(&error_fatal);
 
     module_call_init(MODULE_INIT_QOM);

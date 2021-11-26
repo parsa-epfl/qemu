@@ -3359,7 +3359,7 @@ static int qemu_rdma_registration_handle(QEMUFile *f, void *opaque)
 
                 reg_result->host_addr = (uintptr_t)block->local_host_addr;
 
-                trace_qemu_rdma_registration_handle_register_rkey(rkey);
+                trace_qemu_rdma_registration_handle_register_rkey(reg_key);
 
                 result_to_network(reg_result);
             }

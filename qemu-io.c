@@ -574,6 +574,10 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
+
     if (qemu_opts_foreach(&qemu_object_opts,
                           user_creatable_add_opts_foreach,
                           NULL, NULL)) {
