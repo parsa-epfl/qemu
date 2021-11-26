@@ -47,7 +47,7 @@
 # Changelist
 # - Nov. 26/21
 
-name: qemu-build-test
+name: qemu-test
 on:
   push:
     branches:
@@ -57,7 +57,7 @@ on:
     branches:
       - master
 jobs:
-  build-testing:
+  build-run-qemu-unit:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
@@ -83,3 +83,5 @@ jobs:
           ./build_qemu.sh -install
       - name: Build QEMU
         run: ./build_qemu.sh -${MODE_TO_BUILD}
+      - name: Basic QEMU unit tests
+        run: make check
