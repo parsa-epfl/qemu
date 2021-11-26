@@ -26,9 +26,14 @@ static int worker_cb(void *opaque)
 
 static int long_cb(void *opaque)
 {
+    const int sleep_time = 2000000;
     WorkerTestData *data = opaque;
     atomic_inc(&data->n);
-    pth_usleep(2000000);
+#ifdef CONFIG_PTH
+    pth_usleep(sleep_time);
+#else
+    g_usleep(sleep_time);
+#endif
     atomic_inc(&data->n);
     return 0;
 }
@@ -137,6 +142,7 @@ static void test_submit_many(void)
 
 static void do_test_cancel(bool sync)
 {
+    const int sleep_time = 1000000;
     WorkerTestData data[100];
     int num_canceled;
     int i;
@@ -165,7 +171,11 @@ static void do_test_cancel(bool sync)
      * testing on the behavior of the scheduler...
      */
     g_assert_cmpint(active, ==, 100);
-    pth_usleep(1000000);
+#ifdef CONFIG_PTH
+    pth_usleep(sleep_time);
+#else
+    g_usleep(sleep_time);
+#endif
     g_assert_cmpint(active, >, 50);
 
     /* Cancel the jobs that haven't been started yet.  */

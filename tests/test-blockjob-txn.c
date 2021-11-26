@@ -252,6 +252,9 @@ static void test_pair_jobs_fail_cancel_race(void)
 int main(int argc, char **argv)
 {
     qemu_init_main_loop(&error_abort);
+#ifdef CONFIG_PTH
+    initMainThread();
+#endif
     bdrv_init();
 
     g_test_init(&argc, &argv, NULL);
