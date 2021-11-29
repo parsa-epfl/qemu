@@ -84,5 +84,5 @@ jobs:
           ./build_qemu.sh -install
       - name: Build QEMU
         run: ./build_qemu.sh -${MODE_TO_BUILD}
-        #- name: Basic QEMU unit tests
-        #run: make check
+      - name: Basic QEMU unit tests
+        run: make check
