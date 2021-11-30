@@ -62,6 +62,7 @@ unsigned long portable_sleep(unsigned long sec) {
 #ifdef CONFIG_PTH
   return pth_sleep(sec);
 #else
-  return g_sleep(sec);
+  g_usleep(1000000*sec);
+  return 0;
 #endif
 }
