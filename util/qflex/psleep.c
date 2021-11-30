@@ -42,10 +42,10 @@
 // LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //  DO-NOT-REMOVE end-copyright-block
-#include "qflex/psleep.h"
+#include "qemu/osdep.h"
 #include "glib-compat.h"
-#include "qemu/thread-pth.h"
-
+#include "qemu/thread.h"
+#include "qflex/psleep.h"
 /* Implementation of portable usleep.
  */
 void portable_usleep(unsigned long us) {
