@@ -76,6 +76,7 @@
 #include "qemu/atomic.h"
 #include "qemu/thread.h"
 #include "qemu/main-loop.h"
+#include "qflex/qflex.h"
 
 /*
  * Global grace period counter.  Bit 0 is always one in rcu_gp_ctr.
@@ -291,7 +292,7 @@ static void *call_rcu_thread(void *opaque)
          * added before synchronize_rcu() starts.
          */
         while (n == 0 || (n < RCU_CALL_MIN_SIZE && ++tries <= 5)) {
-            g_usleep(10000);
+            portable_usleep(10000);
             if (n == 0) {
                 qemu_event_reset(&rcu_call_ready_event);
                 n = atomic_read(&rcu_call_count);

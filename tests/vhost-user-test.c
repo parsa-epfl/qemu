@@ -741,7 +741,7 @@ connect_thread(gpointer data)
     TestServer *s = data;
 
     /* wait for qemu to start before first try, to avoid extra warnings */
-    g_usleep(G_USEC_PER_SEC);
+    portable_usleep(G_USEC_PER_SEC);
     test_server_connect(s);
 
     return NULL;

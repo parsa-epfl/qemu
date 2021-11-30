@@ -43,6 +43,7 @@
 #include "migration/colo.h"
 #include "hw/boards.h"
 #include "monitor/monitor.h"
+#include "qflex/qflex.h"
 
 #define MAX_THROTTLE  (32 << 20)      /* Migration transfer speed throttling */
 
@@ -2181,7 +2182,7 @@ static void *migration_thread(void *opaque)
         }
         if (qemu_file_rate_limit(s->to_dst_file)) {
             /* usleep expects microseconds */
-            g_usleep((initial_time + BUFFER_DELAY - current_time)*1000);
+            portable_usleep((initial_time + BUFFER_DELAY - current_time)*1000);
         }
     }
 

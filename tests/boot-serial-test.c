@@ -61,7 +61,7 @@ static void check_guest_output(const testdef_t *test, int fd)
             }
         }
         g_assert(nbr >= 0);
-        g_usleep(10000);
+        portable_usleep(10000);
     }
 
 done:

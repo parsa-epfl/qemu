@@ -18,6 +18,7 @@
 #include "qemu/thread.h"
 #include "qemu/error-report.h"
 #include "iothread.h"
+#include "qflex/qflex.h"
 
 /* AioContext management */
 
@@ -179,7 +180,7 @@ static void test_multi_co_schedule(int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    pth_usleep(seconds * 1000000);
+    portable_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     for (i = 0; i < NUM_CONTEXTS; i++) {
@@ -244,11 +245,11 @@ static void test_multi_co_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    pth_usleep(seconds * 1000000);
+    portable_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        pth_usleep(100000);
+        portable_usleep(100000);
     }
 
     join_aio_contexts();
@@ -367,11 +368,11 @@ static void test_multi_fair_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    pth_usleep(seconds * 1000000);
+    portable_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        pth_usleep(100000);
+        portable_usleep(100000);
     }
 
     join_aio_contexts();
@@ -423,11 +424,11 @@ static void test_multi_mutex(int threads, int seconds)
         aio_co_schedule(ctx[i], co1);
     }
 
-    pth_usleep(seconds * 1000000);
+    portable_usleep(seconds * 1000000);
 
     atomic_mb_set(&now_stopping, true);
     while (running > 0) {
-        pth_usleep(100000);
+        portable_usleep(100000);
     }
 
     join_aio_contexts();

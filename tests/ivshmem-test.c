@@ -370,7 +370,7 @@ static void test_ivshmem_server(bool msi)
     }
     out_reg(s2, DOORBELL, vm1 << 16);
     do {
-        g_usleep(10000);
+        portable_usleep(10000);
         ret = msi ? qpci_msix_pending(s1->dev, 0) : in_reg(s1, INTRSTATUS);
     } while (ret == 0 && g_get_monotonic_time() < end_time);
     g_assert_cmpuint(ret, !=, 0);
@@ -385,7 +385,7 @@ static void test_ivshmem_server(bool msi)
     }
     out_reg(s1, DOORBELL, vm2 << 16 | 1);
     do {
-        g_usleep(10000);
+        portable_usleep(10000);
         ret = msi ? qpci_msix_pending(s2->dev, 1) : in_reg(s2, INTRSTATUS);
     } while (ret == 0 && g_get_monotonic_time() < end_time);
     g_assert_cmpuint(ret, !=, 0);

@@ -44,6 +44,7 @@
 //  DO-NOT-REMOVE end-copyright-block
 #include "qflex/qflex.h"
 #include "../libqflex/api.h"
+#include <glib.h>
 
 #define COPY_EXCP_HALTED 0x10003
 
@@ -52,6 +53,16 @@ bool qflex_prologue_done = false;
 uint64_t qflex_prologue_pc = 0xDEADBEEF;
 bool qflex_control_with_flexus = false;
 bool qflex_trace_enabled = false;
+
+/* Implementation of portable usleep.
+ */
+void portable_usleep(unsigned long us) {
+#ifdef CONFIG_PTH
+  pth_usleep(us);
+#else
+  g_usleep(us);
+#endif
+}
 
 #ifdef CONFIG_FLEXUS
 

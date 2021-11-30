@@ -25,6 +25,7 @@
 #include "qemu/rcu.h"
 #include "qemu/thread.h"
 #include "qemu/rcu_queue.h"
+#include "qflex/qflex.h"
 
 /*
  * Test variables.
@@ -108,7 +109,7 @@ static void *rcu_q_reader(void *arg)
     *(struct rcu_reader_data **)arg = &rcu_reader;
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
 
     while (goflag == GOFLAG_RUN) {
@@ -121,7 +122,7 @@ static void *rcu_q_reader(void *arg)
         }
         rcu_read_unlock();
 
-        g_usleep(100);
+        portable_usleep(100);
     }
     qemu_mutex_lock(&counts_mutex);
     n_reads += n_reads_local;
@@ -143,7 +144,7 @@ static void *rcu_q_updater(void *arg)
     *(struct rcu_reader_data **)arg = &rcu_reader;
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
 
     while (goflag == GOFLAG_RUN) {
@@ -206,7 +207,7 @@ static void rcu_qtest_run(int duration, int nreaders)
 {
     int nthreads = nreaders + 1;
     while (atomic_read(&nthreadsrunning) < nthreads) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
 
     goflag = GOFLAG_RUN;
@@ -240,7 +241,7 @@ static void rcu_qtest(const char *test, int duration, int nreaders)
     qemu_mutex_unlock(&counts_mutex);
     synchronize_rcu();
     while (n_nodes_removed > n_reclaims) {
-        g_usleep(100);
+        portable_usleep(100);
         synchronize_rcu();
     }
     if (g_test_in_charge) {

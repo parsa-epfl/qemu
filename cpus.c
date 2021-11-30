@@ -95,6 +95,7 @@
 #include "hw/nmi.h"
 #include "sysemu/replay.h"
 #include "hw/boards.h"
+#include "qflex/qflex.h" // for portable_usleep
 
 #if defined(CONFIG_FLEXUS)
 #include "qflex/qflex.h"
@@ -1171,7 +1172,7 @@ static void cpu_throttle_thread(CPUState *cpu, run_on_cpu_data opaque)
     sleeptime_ns = (long)(throttle_ratio * CPU_THROTTLE_TIMESLICE_NS);
 
     qemu_mutex_unlock_iothread();
-    g_usleep(sleeptime_ns / 1000); /* Convert ns to us for usleep call */
+    portable_usleep(sleeptime_ns / 1000); /* Convert ns to us for usleep call */
     qemu_mutex_lock_iothread();
     atomic_set(&cpu->throttle_thread_scheduled, 0);
 }

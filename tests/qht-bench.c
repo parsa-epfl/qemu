@@ -10,6 +10,7 @@
 #include "qemu/qht.h"
 #include "qemu/rcu.h"
 #include "exec/tb-hash-xx.h"
+#include "qflex/qflex.h" // for portable_usleep
 
 struct thread_stats {
     size_t rd;
@@ -136,7 +137,7 @@ static void do_rz(struct thread_info *info)
             stats->not_rz++;
         }
     }
-    g_usleep(resize_delay);
+    portable_usleep(resize_delay);
 }
 
 static void do_rw(struct thread_info *info)

@@ -7,6 +7,7 @@
 #include "qemu/timer.h"
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
+#include "qflex/qflex.h"
 
 static AioContext *ctx;
 static ThreadPool *pool;
@@ -29,11 +30,7 @@ static int long_cb(void *opaque)
     const int sleep_time = 2000000;
     WorkerTestData *data = opaque;
     atomic_inc(&data->n);
-#ifdef CONFIG_PTH
-    pth_usleep(sleep_time);
-#else
-    g_usleep(sleep_time);
-#endif
+    portable_usleep(sleep_time);
     atomic_inc(&data->n);
     return 0;
 }
@@ -171,11 +168,7 @@ static void do_test_cancel(bool sync)
      * testing on the behavior of the scheduler...
      */
     g_assert_cmpint(active, ==, 100);
-#ifdef CONFIG_PTH
-    pth_usleep(sleep_time);
-#else
-    g_usleep(sleep_time);
-#endif
+    portable_usleep(sleep_time);
     g_assert_cmpint(active, >, 50);
 
     /* Cancel the jobs that haven't been started yet.  */

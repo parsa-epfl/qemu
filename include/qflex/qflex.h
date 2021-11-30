@@ -15,7 +15,7 @@
 // **QFlex License**
 // 
 // QFlex
-// Copyright (c) 2020, Parallel Systems Architecture Lab, EPFL
+// Copyright (c) 2021, Parallel Systems Architecture Lab, EPFL
 // All rights reserved.
 // 
 // Redistribution and use in source and binary forms, with or without modification,
@@ -108,5 +108,11 @@ static inline bool qflex_update_prologue_done(uint64_t cur_pc) {
     return qflex_prologue_done;
 }
 static inline void qflex_update_inst_done(bool done) { qflex_inst_done = done; }
+
+/* Wrapper function for porting "sleep" to work with either PTH or POSIX threads.
+ * Parameters:
+ *  - us: the time to sleep in microseconds
+ */
+void portable_usleep(unsigned long us);
 
 #endif /* QFLEX_H */

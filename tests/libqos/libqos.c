@@ -151,7 +151,7 @@ void migrate(QOSState *from, QOSState *to, const char *uri)
 
         if ((strcmp(st, "setup") == 0) || (strcmp(st, "active") == 0)) {
             QDECREF(rsp);
-            g_usleep(5000);
+            portable_usleep(5000);
             continue;
         }
 

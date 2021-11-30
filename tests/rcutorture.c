@@ -64,6 +64,7 @@
 #include "qemu/atomic.h"
 #include "qemu/rcu.h"
 #include "qemu/thread.h"
+#include "qflex/qflex.h" // for portable_usleep
 
 long long n_reads = 0LL;
 long n_updates = 0L;
@@ -118,7 +119,7 @@ static void *rcu_read_perf_test(void *arg)
     *(struct rcu_reader_data **)arg = &rcu_reader;
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     while (goflag == GOFLAG_RUN) {
         for (i = 0; i < RCU_READ_RUN; i++) {
@@ -144,7 +145,7 @@ static void *rcu_update_perf_test(void *arg)
     *(struct rcu_reader_data **)arg = &rcu_reader;
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     while (goflag == GOFLAG_RUN) {
         synchronize_rcu();
@@ -166,10 +167,10 @@ static void perftestinit(void)
 static void perftestrun(int nthreads, int duration, int nreaders, int nupdaters)
 {
     while (atomic_read(&nthreadsrunning) < nthreads) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     goflag = GOFLAG_RUN;
-    g_usleep(duration * G_USEC_PER_SEC);
+    portable_usleep(duration * G_USEC_PER_SEC);
     goflag = GOFLAG_STOP;
     wait_all_threads();
     printf("n_reads: %lld  n_updates: %ld  nreaders: %d  nupdaters: %d duration: %d\n",
@@ -249,7 +250,7 @@ static void *rcu_read_stress_test(void *arg)
 
     *(struct rcu_reader_data **)arg = &rcu_reader;
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     while (goflag == GOFLAG_RUN) {
         rcu_read_lock();
@@ -293,7 +294,7 @@ static void *rcu_update_stress_test(void *arg)
 
     *(struct rcu_reader_data **)arg = &rcu_reader;
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     while (goflag == GOFLAG_RUN) {
         i = rcu_stress_idx + 1;
@@ -326,11 +327,11 @@ static void *rcu_fake_update_stress_test(void *arg)
 
     *(struct rcu_reader_data **)arg = &rcu_reader;
     while (goflag == GOFLAG_INIT) {
-        g_usleep(1000);
+        portable_usleep(1000);
     }
     while (goflag == GOFLAG_RUN) {
         synchronize_rcu();
-        g_usleep(1000);
+        portable_usleep(1000);
     }
 
     rcu_unregister_thread();
@@ -352,7 +353,7 @@ static void stresstest(int nreaders, int duration)
         create_thread(rcu_fake_update_stress_test);
     }
     goflag = GOFLAG_RUN;
-    g_usleep(duration * G_USEC_PER_SEC);
+    portable_usleep(duration * G_USEC_PER_SEC);
     goflag = GOFLAG_STOP;
     wait_all_threads();
     printf("n_reads: %lld  n_updates: %ld  n_mberror: %d\n",
@@ -382,7 +383,7 @@ static void gtest_stress(int nreaders, int duration)
         create_thread(rcu_fake_update_stress_test);
     }
     goflag = GOFLAG_RUN;
-    g_usleep(duration * G_USEC_PER_SEC);
+    portable_usleep(duration * G_USEC_PER_SEC);
     goflag = GOFLAG_STOP;
     wait_all_threads();
     g_assert_cmpint(n_mberror, ==, 0);

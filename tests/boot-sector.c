@@ -152,7 +152,7 @@ void boot_sector_test(void)
         if (signature == SIGNATURE) {
             break;
         }
-        g_usleep(TEST_DELAY);
+        portable_usleep(TEST_DELAY);
     }
 
     g_assert_cmphex(signature, ==, SIGNATURE);

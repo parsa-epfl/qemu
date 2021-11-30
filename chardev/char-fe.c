@@ -30,6 +30,7 @@
 #include "chardev/char-fe.h"
 #include "chardev/char-io.h"
 #include "chardev/char-mux.h"
+#include "qflex/qflex.h" // for portable_usleep
 
 int qemu_chr_fe_write(CharBackend *be, const uint8_t *buf, int len)
 {
@@ -72,7 +73,7 @@ int qemu_chr_fe_read_all(CharBackend *be, uint8_t *buf, int len)
         res = CHARDEV_GET_CLASS(s)->chr_sync_read(s, buf + offset,
                                                   len - offset);
         if (res == -1 && errno == EAGAIN) {
-            g_usleep(100);
+            portable_usleep(100);
             goto retry;
         }
 

@@ -36,7 +36,7 @@ static void check_guest_memory(void)
         if (signature == MAGIC) {
             break;
         }
-        g_usleep(10000);
+        portable_usleep(10000);
     }
 
     g_assert_cmphex(signature, ==, MAGIC);

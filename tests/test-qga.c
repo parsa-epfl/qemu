@@ -3,6 +3,7 @@
 #include <glib/gstdio.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include "qflex/qflex.h" // for portable_usleep
 
 #include "libqtest.h"
 
@@ -27,7 +28,7 @@ static int connect_qga(char *path)
         len = strlen(remote.sun_path) + sizeof(remote.sun_family);
         ret = connect(s, (struct sockaddr *)&remote, len);
         if (ret == -1) {
-            g_usleep(G_USEC_PER_SEC);
+            portable_usleep(G_USEC_PER_SEC);
         }
         if (i++ == 10) {
             return -1;

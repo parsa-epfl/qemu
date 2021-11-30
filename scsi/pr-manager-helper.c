@@ -17,6 +17,7 @@
 #include "io/channel.h"
 #include "io/channel-socket.h"
 #include "pr-helper.h"
+#include "qflex/qflex.h"
 
 #include <scsi/sg.h>
 
@@ -171,7 +172,7 @@ static int pr_manager_helper_run(PRManager *p,
             ret = pr_manager_helper_initialize(pr_mgr, NULL);
             if (ret < 0) {
                 qemu_mutex_unlock(&pr_mgr->lock);
-                g_usleep(G_USEC_PER_SEC);
+                portable_usleep(G_USEC_PER_SEC);
                 qemu_mutex_lock(&pr_mgr->lock);
                 continue;
             }
