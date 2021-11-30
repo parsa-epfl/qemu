@@ -34,7 +34,7 @@
 #include "qemu/help_option.h"
 
 #include "chardev/char-mux.h"
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 /***********************************************************/
 /* character device */

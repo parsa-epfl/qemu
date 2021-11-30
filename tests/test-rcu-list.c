@@ -25,7 +25,7 @@
 #include "qemu/rcu.h"
 #include "qemu/thread.h"
 #include "qemu/rcu_queue.h"
-#include "qflex/qflex.h"
+#include "qflex/psleep.h" // for portable_usleep
 
 /*
  * Test variables.

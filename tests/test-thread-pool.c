@@ -7,7 +7,7 @@
 #include "qemu/timer.h"
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
-#include "qflex/qflex.h"
+#include "qflex/psleep.h" // for portable_usleep
 
 static AioContext *ctx;
 static ThreadPool *pool;

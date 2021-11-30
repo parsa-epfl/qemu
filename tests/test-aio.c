@@ -16,7 +16,7 @@
 #include "qemu/timer.h"
 #include "qemu/sockets.h"
 #include "qemu/error-report.h"
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 static AioContext *ctx;
 

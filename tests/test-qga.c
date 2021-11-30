@@ -3,7 +3,7 @@
 #include <glib/gstdio.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 #include "libqtest.h"
 

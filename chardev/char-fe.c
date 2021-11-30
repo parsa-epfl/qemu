@@ -30,7 +30,7 @@
 #include "chardev/char-fe.h"
 #include "chardev/char-io.h"
 #include "chardev/char-mux.h"
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 int qemu_chr_fe_write(CharBackend *be, const uint8_t *buf, int len)
 {

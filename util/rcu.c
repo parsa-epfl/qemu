@@ -76,7 +76,7 @@
 #include "qemu/atomic.h"
 #include "qemu/thread.h"
 #include "qemu/main-loop.h"
-#include "qflex/qflex.h"
+#include "qflex/psleep.h"
 
 /*
  * Global grace period counter.  Bit 0 is always one in rcu_gp_ctr.

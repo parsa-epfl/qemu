@@ -17,7 +17,7 @@
 #include "io/channel.h"
 #include "io/channel-socket.h"
 #include "pr-helper.h"
-#include "qflex/qflex.h"
+#include "qflex/psleep.h"
 
 #include <scsi/sg.h>
 

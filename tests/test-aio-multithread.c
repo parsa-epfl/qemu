@@ -18,7 +18,7 @@
 #include "qemu/thread.h"
 #include "qemu/error-report.h"
 #include "iothread.h"
-#include "qflex/qflex.h"
+#include "qflex/psleep.h" // for portable_usleep
 
 /* AioContext management */
 

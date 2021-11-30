@@ -64,7 +64,7 @@
 #include "qemu/atomic.h"
 #include "qemu/rcu.h"
 #include "qemu/thread.h"
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 long long n_reads = 0LL;
 long n_updates = 0L;

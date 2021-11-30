@@ -1,2 +1,2 @@
 util-obj-y = qflex-log.o
-util-obj-y += qflex.o
+util-obj-y += qflex.o psleep.o

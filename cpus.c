@@ -95,7 +95,7 @@
 #include "hw/nmi.h"
 #include "sysemu/replay.h"
 #include "hw/boards.h"
-#include "qflex/qflex.h" // for portable_usleep
+#include "qflex/psleep.h" // for portable_usleep
 
 #if defined(CONFIG_FLEXUS)
 #include "qflex/qflex.h"
