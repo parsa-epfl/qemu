@@ -43,7 +43,7 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //  DO-NOT-REMOVE end-copyright-block
 #include "qflex/psleep.h"
-#include <glib.h>
+#include "glib-compat.h"
 #include "qemu/thread-pth.h"
 
 /* Implementation of portable usleep.
