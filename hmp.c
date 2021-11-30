@@ -2610,13 +2610,12 @@ void hmp_quantum_get(Monitor *mon, const QDict *qdict)
     Error *err = NULL;
     QuantumInfo* info;
 
-
     info = qmp_quantum_get_all(&err);
     monitor_printf(mon, "Current Quantums are set to: core %lu record: %lu node: %lu:\n", info->quantum_core,
                                                                                           info->quantum_record,
                                                                                           info->quantum_node);
-
     hmp_handle_error(mon, &err);
+    qapi_free_QuantumInfo(info);
 }
 
 void hmp_quantum_set(Monitor *mon, const QDict *qdict)
@@ -2644,7 +2643,7 @@ void hmp_cpu_dbg(Monitor *mon,  const QDict *qdict)
     DbgDataAll* dbg = qmp_cpu_dbg(&err);
     for (int i = 0; i < dbg->size; i++)
         monitor_printf(mon, "%lu\n%s", dbg->data[i].instr, dbg->data[i].data);
-
+    qapi_free_DbgDataAll(dbg);
 }
 
 void hmp_cpu_zero_all(Monitor *mon,  const QDict *qdict)

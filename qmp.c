@@ -437,16 +437,13 @@ void qmp_flexus_writeProfile(const char *filename, Error **errp)
 
 QuantumInfo *qmp_quantum_get_all(Error **errp)
 {
-#ifdef CONFIG_QUANTUM
     QuantumInfo *info = g_malloc0(sizeof(*info));
+#ifdef CONFIG_QUANTUM
     info->quantum_core = query_quantum_core_value();
     info->quantum_record = query_quantum_core_value();
     info->quantum_node= query_quantum_core_value();
-
-    return info;
-#else
-    return NULL;
 #endif
+    return info;
 }
 
 void qmp_quantum_core_set(uint64_t val, Error **errp)
@@ -461,15 +458,12 @@ void qmp_quantum_node_set(uint64_t val, Error **errp)
     set_quantum_node_value(val);
 #endif
 }
+
 DbgDataAll *qmp_cpu_dbg(Error **errp)
 {
-//#ifdef CONFIG_QUANTUM
-//    DbgDataAll *info = g_malloc0(sizeof(*info));
-//    cpu_dbg(info);
-//    return info;
-//#else
-    return NULL;
-//#endif
+    DbgDataAll *info = g_malloc0(sizeof(DbgDataAll));
+    //cpu_dbg(info); // FIXME: This should be implemented.
+    return info;
 }
 void qmp_cpu_zero_all(Error **errp)
 {
