@@ -45,10 +45,16 @@
 #ifndef QF_PSLEEP_H
 #define QF_PSLEEP_H
 
-/* Wrapper function for porting "sleep" to work with either PTH or POSIX threads.
+/* Wrapper function for porting "usleep" to work with either PTH or POSIX threads.
  * Parameters:
  *  - us: the time to sleep in microseconds
  */
 void portable_usleep(unsigned long us);
+
+/* Wrapper function for porting "sleep" to work with either PTH or POSIX threads.
+ * Parameters:
+ *  - us: the time to sleep in seconds
+ */
+unsigned long portable_sleep(unsigned long sec);
 
 #endif

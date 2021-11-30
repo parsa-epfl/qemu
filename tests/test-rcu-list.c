@@ -104,9 +104,13 @@ static void *rcu_q_reader(void *arg)
     long long n_reads_local = 0;
     struct list_element *el;
 
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
@@ -124,6 +128,7 @@ static void *rcu_q_reader(void *arg)
 
         portable_usleep(100);
     }
+    printf("reader done\n");
     qemu_mutex_lock(&counts_mutex);
     n_reads += n_reads_local;
     qemu_mutex_unlock(&counts_mutex);
@@ -141,7 +146,13 @@ static void *rcu_q_updater(void *arg)
     long long n_removed_local = 0;
     struct list_element *el, *prev_el;
 
+    PTH_UPDATE_CONTEXT;
+    rcu_register_thread();
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
@@ -179,7 +190,9 @@ static void *rcu_q_updater(void *arg)
         n_updates_local += 2;
         synchronize_rcu();
     }
+    printf("writer done, sync one more time\n");
     synchronize_rcu();
+    printf("writer done\n");
     qemu_mutex_lock(&counts_mutex);
     n_nodes += n_nodes_local;
     n_updates += n_updates_local;
@@ -211,7 +224,7 @@ static void rcu_qtest_run(int duration, int nreaders)
     }
 
     goflag = GOFLAG_RUN;
-    sleep(duration);
+    portable_sleep(duration);
     goflag = GOFLAG_STOP;
     wait_all_threads();
 }

@@ -114,9 +114,13 @@ static void *rcu_read_perf_test(void *arg)
     int i;
     long long n_reads_local = 0;
 
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
@@ -140,9 +144,13 @@ static void *rcu_update_perf_test(void *arg)
 {
     long long n_updates_local = 0;
 
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     atomic_inc(&nthreadsrunning);
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
@@ -246,9 +254,13 @@ static void *rcu_read_stress_test(void *arg)
     long long rcu_stress_local[RCU_STRESS_PIPE_LEN + 1] = { 0 };
     volatile int garbage = 0;
 
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
     }
@@ -290,9 +302,13 @@ static void *rcu_update_stress_test(void *arg)
     int i;
     struct rcu_stress *p;
 
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
     }
@@ -323,9 +339,13 @@ static void *rcu_update_stress_test(void *arg)
 
 static void *rcu_fake_update_stress_test(void *arg)
 {
+    PTH_UPDATE_CONTEXT;
     rcu_register_thread();
-
+#ifdef CONFIG_PTH
+    *(struct rcu_reader_data **)arg = &(w->rcu_reader);
+#else
     *(struct rcu_reader_data **)arg = &rcu_reader;
+#endif
     while (goflag == GOFLAG_INIT) {
         portable_usleep(1000);
     }

@@ -55,3 +55,13 @@ void portable_usleep(unsigned long us) {
   g_usleep(us);
 #endif
 }
+
+/* Implementation of portable sleep
+ */
+unsigned long portable_sleep(unsigned long sec) {
+#ifdef CONFIG_PTH
+  return pth_sleep(sec);
+#else
+  return g_sleep(sec);
+#endif
+}
