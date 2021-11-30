@@ -138,7 +138,7 @@ class QcowHeader:
         for ex in self.extensions:
 
             data = ex.data[:ex.length]
-            if all(c in string.printable for c in data):
+            if all(str(c) in string.printable for c in data):
                 data = "'%s'" % data
             else:
                 data = "<binary>"

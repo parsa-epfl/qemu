@@ -84,5 +84,9 @@ jobs:
           ./build_qemu.sh -install
       - name: Build QEMU
         run: ./build_qemu.sh -${MODE_TO_BUILD}
-      - name: Basic QEMU unit tests
-        run: make check
+      - name: Run QEMU unit tests
+        run: make check-unit
+      - name: Run QMP and QAPI tests
+        run: make check-qtest check-qapi-schema
+      - name: Run block layer tests
+        run: make check-block
