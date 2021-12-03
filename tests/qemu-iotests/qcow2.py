@@ -11,7 +11,10 @@ class QcowHeaderExtension:
     def __init__(self, magic, length, data):
         if length % 8 != 0:
             padding = 8 - (length % 8)
-            data += "\0" * padding
+            if type(data) == str:
+              data += "\0" * padding
+            else:
+              data += b"\0" * padding
 
         self.magic  = magic
         self.length = length
@@ -108,7 +111,10 @@ class QcowHeader:
         for ex in extensions:
             buf = struct.pack('>II', ex.magic, ex.length)
             fd.write(buf)
-            fd.write(ex.data)
+            if type(ex.data) == str:
+              fd.write(ex.data.encode())
+            else:
+              fd.write(ex.data)
 
         if self.backing_file != None:
             self.backing_file_offset = fd.tell()
@@ -138,6 +144,10 @@ class QcowHeader:
         for ex in self.extensions:
 
             data = ex.data[:ex.length]
+            try:
+              data = data.decode()
+            except:
+              continue
             if all(str(c) in string.printable for c in data):
                 data = "'%s'" % data
             else:
