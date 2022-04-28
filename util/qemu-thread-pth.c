@@ -539,6 +539,14 @@ void qemu_thread_create(QemuThread *thread, const char *name,
         error_exit(err, __func__);
     }
 
+    /* Use a large stack for the vcpu threads */
+    const size_t qemu_vcpu_stack_size = 8*(1<<20); // 8MB
+    err = pthpthread_attr_setstacksize(&attr,qemu_vcpu_stack_size);
+
+    if (err) {
+        error_exit(err, __func__);
+    }
+
     /* Leave signal handling to the iothread.  */
     sigfillset(&set);
     pthpthread_sigmask(SIG_SETMASK, &set, &oldset);

@@ -130,7 +130,7 @@ if [ "${INSTALL_DEPS}" = "TRUE" ]; then
         sudo apt-get update -qq
         sudo apt-get install -y build-essential python-dev software-properties-common pkg-config \
             zip zlib1g-dev unzip libbz2-dev \
-            expect bridge-utils uml-utilities pigz
+            expect bridge-utils uml-utilities pbzip2
         # Install known-good version of gcc-8
         GCC_VERSION="8"
         sudo apt-get install -y gcc-${GCC_VERSION} g++-${GCC_VERSION}
@@ -141,7 +141,7 @@ if [ "${INSTALL_DEPS}" = "TRUE" ]; then
         sudo apt-get update -qq
         sudo apt-get --no-install-recommends -y build-dep qemu
     elif [ "$centos" ]; then
-        sudo yum update -q
+        sudo yum update -q -y
         sudo yum install -y centos-release-scl
         # Install known-good version of gcc-8
         GCC_VERSION="8"
@@ -155,7 +155,7 @@ if [ "${INSTALL_DEPS}" = "TRUE" ]; then
 
         # Install dependencies
         sudo yum install -y make cmake python-devel autoconf binutils bison flex \
-            libtool pkgconfig bzip2-devel zlib-devel pigz
+            libtool pkgconfig bzip2-devel zlib-devel pigz glib2-devel pixman-devel jemalloc-devel libicu-devel
     fi
     # Install pth if it is not installed already
     if [ ! -f $HOME/lib/libpth.so ]; then
@@ -169,7 +169,8 @@ fi
 JOBS=$(($(getconf _NPROCESSORS_ONLN) + 1))
 echo "=== Using ${JOBS} simultaneous jobs ==="
 
-# Build Qemu for emulation, or timing
+# Build Qemu for emulation, or timing. Make command is replicated so that it is possible to only
+# run with -install and not launch a build.
 if [ "${BUILD_EMULATION}" = "TRUE" ]; then
     export CFLAGS="-fPIC"
     ./config.emulation
@@ -183,3 +184,4 @@ elif [ "${BUILD_TIMING}" = "TRUE" ]; then
     ./config.timing
     make clean && make -j${JOBS}
 fi
+
