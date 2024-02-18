@@ -1760,6 +1760,16 @@ if not get_option('libpmem').auto() or have_system
   libpmem = dependency('libpmem', required: get_option('libpmem'),
                        method: 'pkg-config')
 endif
+
+libqflex = not_found
+if get_option('libqflex').enabled()
+  if fs.is_dir('backends/libqflex')
+    libqflex = declare_dependency()
+  else
+    error('libqflex was not found in "./backends/libqflex"')
+  endif
+endif
+
 libdaxctl = not_found
 if not get_option('libdaxctl').auto() or have_system
   libdaxctl = dependency('libdaxctl', required: get_option('libdaxctl'),
@@ -2110,6 +2120,7 @@ config_host_data.set('CONFIG_LIBSSH', libssh.found())
 config_host_data.set('CONFIG_LINUX_AIO', libaio.found())
 config_host_data.set('CONFIG_LINUX_IO_URING', linux_io_uring.found())
 config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
+config_host_data.set('CONFIG_LIBQFLEX', libqflex.found())
 config_host_data.set('CONFIG_MODULES', enable_modules)
 config_host_data.set('CONFIG_NUMA', numa.found())
 if numa.found()
@@ -4317,6 +4328,7 @@ summary_info += {'libudev':           libudev}
 summary_info += {'FUSE lseek':        fuse_lseek.found()}
 summary_info += {'selinux':           selinux}
 summary_info += {'libdw':             libdw}
+
 summary(summary_info, bool_yn: true, section: 'Dependencies')
 
 if not supported_cpus.contains(cpu)
@@ -4344,3 +4356,7 @@ if not supported_oses.contains(targetos)
   message('if you care about QEMU on this platform you should contact')
   message('us upstream at qemu-devel@nongnu.org.')
 endif
+
+summary_info = {}
+summary_info += {'libqflex':          libqflex}
+summary(summary_info, bool_yn: true, section: 'PARSA')
