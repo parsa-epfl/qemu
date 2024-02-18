@@ -178,6 +178,8 @@ option('libdaxctl', type : 'feature', value : 'auto',
        description: 'libdaxctl support')
 option('libpmem', type : 'feature', value : 'auto',
        description: 'libpmem support')
+option('libqflex', type : 'feature', value : 'auto',
+       description: 'QFlex support')
 option('libssh', type : 'feature', value : 'auto',
        description: 'ssh block device support')
 option('libudev', type : 'feature', value : 'auto',

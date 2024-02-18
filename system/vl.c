@@ -134,6 +134,10 @@
 #include "qemu/guest-random.h"
 #include "qemu/keyval.h"
 
+#ifdef CONFIG_LIBQFLEX
+#include "backends/libqflex/libqflex-module.h"
+#endif
+
 #define MAX_VIRTIO_CONSOLES 1
 
 typedef struct BlockdevOptionsQueueEntry {
@@ -2776,6 +2780,11 @@ void qemu_init(int argc, char **argv)
     qemu_add_opts(&qemu_semihosting_config_opts);
     qemu_add_opts(&qemu_fw_cfg_opts);
     qemu_add_opts(&qemu_action_opts);
+
+#ifdef CONFIG_LIBQFLEX
+    qemu_add_opts(&qemu_libqflex_opts);
+#endif
+
     qemu_add_run_with_opts();
     module_call_init(MODULE_INIT_OPTS);
 
@@ -3636,6 +3645,14 @@ void qemu_init(int argc, char **argv)
             }
 #endif /* CONFIG_POSIX */
 
+#ifdef CONFIG_LIBQFLEX
+
+            case QEMU_OPTION_libqflex:
+                libqflex_configure();
+                break;
+
+#endif /* CONFIG_LIBQFLEX */
+
             default:
                 error_report("Option not supported in this build");
                 exit(1);
@@ -3764,4 +3781,16 @@ void qemu_init(int argc, char **argv)
     accel_setup_post(current_machine);
     os_setup_post();
     resume_mux_open();
+
+#ifdef CONFIG_LIBQFLEX
+    /**
+     *
+     * Bryan Perdrizat
+     *      Previous developers seem to have put the initialisation
+     *      of (lib)QFlex at the very end of the main initialisation (right there).
+     *      I leave it it here, unaware of its past whereabouts.
+     */
+    libqflex_init();
+
+#endif
 }

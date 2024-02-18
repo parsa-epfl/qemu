@@ -26,4 +26,8 @@ endif
 system_ss.add(when: gio, if_true: files('dbus-vmstate.c'))
 system_ss.add(when: 'CONFIG_SGX', if_true: files('hostmem-epc.c'))
 
+if libqflex.found()
+  subdir('libqflex')
+endif
+
 subdir('tpm')
