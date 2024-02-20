@@ -135,7 +135,7 @@
 #include "qemu/keyval.h"
 
 #ifdef CONFIG_LIBQFLEX
-#include "backends/libqflex/libqflex-module.h"
+#include "middleware/libqflex/libqflex-module.h"
 #endif
 
 #define MAX_VIRTIO_CONSOLES 1

@@ -172,6 +172,7 @@ meson_options_help() {
   printf "%s\n" '  rdma            Enable RDMA-based migration'
   printf "%s\n" '  replication     replication support'
   printf "%s\n" '  rutabaga-gfx    rutabaga_gfx support'
+  printf "%s\n" '  savevm-external Support for external snapshot'
   printf "%s\n" '  sdl             SDL user interface'
   printf "%s\n" '  sdl-image       SDL Image support for icons'
   printf "%s\n" '  seccomp         seccomp support'
@@ -462,6 +463,8 @@ _meson_option_parse() {
     --disable-safe-stack) printf "%s" -Dsafe_stack=false ;;
     --enable-sanitizers) printf "%s" -Dsanitizers=true ;;
     --disable-sanitizers) printf "%s" -Dsanitizers=false ;;
+    --enable-savevm-external) printf "%s" -Dsavevm-external=enabled ;;
+    --disable-savevm-external) printf "%s" -Dsavevm-external=disabled ;;
     --enable-sdl) printf "%s" -Dsdl=enabled ;;
     --disable-sdl) printf "%s" -Dsdl=disabled ;;
     --enable-sdl-image) printf "%s" -Dsdl_image=enabled ;;

@@ -5867,20 +5867,6 @@ SRST
 ERST
 #endif
 
-#ifdef CONFIG_LIBQFLEX
-
-DEFHEADING()
-
-DEFHEADING(Simulation backend:)
-
-DEF("libqflex", 0, QEMU_OPTION_libqflex,
-    "-libqflex	Start custom tracing toward libqflex\n",
-    QEMU_ARCH_ARM)
-SRST
-`` -libqflex	Start custom tracing toward libqflex``
-ERST
-#endif
-
 HXCOMM This is the last statement. Insert new options before this line!
 
 #undef DEF
