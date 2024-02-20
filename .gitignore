@@ -1,4 +1,4 @@
-libqflex/
+middleware/
 /GNUmakefile
 /build/
 /.cache/

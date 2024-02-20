@@ -1761,14 +1761,6 @@ if not get_option('libpmem').auto() or have_system
                        method: 'pkg-config')
 endif
 
-libqflex = not_found
-if get_option('libqflex').enabled()
-  if fs.is_dir('backends/libqflex')
-    libqflex = declare_dependency()
-  else
-    error('libqflex was not found in "./backends/libqflex"')
-  endif
-endif
 
 libdaxctl = not_found
 if not get_option('libdaxctl').auto() or have_system
@@ -1900,6 +1892,42 @@ if not get_option('libdw').auto() or \
                        method: 'pkg-config',
                        required: get_option('libdw'))
 endif
+
+# ______  ___  ______  _____  ___
+# | ___ \/ _ \ | ___ \/  ___|/ _ \
+# | |_/ / /_\ \| |_/ /\ `--./ /_\ \
+# |  __/|  _  ||    /  `--. \  _  |
+# | |   | | | || |\ \ /\__/ / | | |
+# \_|   \_| |_/\_| \_|\____/\_| |_/
+
+middleware_include = false
+middleware_option = [
+  'libqflex',
+  'savevm-external',
+]
+middleware_dep = {}
+
+foreach name: middleware_option
+  if get_option(name).disabled()
+    middleware_dep += {name: not_found}
+    continue
+  endif
+
+  if fs.is_dir('middleware/' + name)
+    # Modify the dictionary directly to set the value for the current key
+    middleware_dep += {name: declare_dependency()}
+    middleware_include = true
+  else
+    error('Middleware directory (' + name + ') was not found in "./middleware/"')
+  endif
+endforeach
+
+#  ___  __ _ _ __ __ _ _ __
+# / __|/ _` | '__/ _` | '_ \
+# \__ \ (_| | | | (_| | |_) |
+# |___/\__,_|_|  \__,_| .__/
+#                     | |
+#                     |_|
 
 #################
 # config-host.h #
@@ -2120,7 +2148,7 @@ config_host_data.set('CONFIG_LIBSSH', libssh.found())
 config_host_data.set('CONFIG_LINUX_AIO', libaio.found())
 config_host_data.set('CONFIG_LINUX_IO_URING', linux_io_uring.found())
 config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
-config_host_data.set('CONFIG_LIBQFLEX', libqflex.found())
+config_host_data.set('CONFIG_LIBQFLEX', middleware_dep['libqflex'].found())
 config_host_data.set('CONFIG_MODULES', enable_modules)
 config_host_data.set('CONFIG_NUMA', numa.found())
 if numa.found()
@@ -2132,6 +2160,7 @@ config_host_data.set('CONFIG_OPENGL', opengl.found())
 config_host_data.set('CONFIG_RBD', rbd.found())
 config_host_data.set('CONFIG_RDMA', rdma.found())
 config_host_data.set('CONFIG_SAFESTACK', get_option('safe_stack'))
+config_host_data.set('CONFIG_SAVEVM_EXT', middleware_dep['savevm-external'].found())
 config_host_data.set('CONFIG_SDL', sdl.found())
 config_host_data.set('CONFIG_SDL_IMAGE', sdl_image.found())
 config_host_data.set('CONFIG_SECCOMP', seccomp.found())
@@ -3473,9 +3502,18 @@ specific_ss.add_all(when: 'CONFIG_TCG_BUILTIN', if_true: tcg_module_ss)
 target_modules += { 'accel' : { 'qtest': qtest_module_ss,
                                 'tcg': tcg_real_module_ss }}
 
-########################
-# Library dependencies #
-########################
+#  __        __   __
+# |__)  /\  |__) /__`  /\
+# |    /~~\ |  \ .__/ /~~\
+
+
+if middleware_include
+  subdir('middleware')
+endif
+
+##############################################
+# Internal static_libraries and dependencies #
+##############################################
 
 modinfo_collect = find_program('scripts/modinfo-collect.py')
 modinfo_generate = find_program('scripts/modinfo-generate.py')
@@ -4330,6 +4368,8 @@ summary_info += {'selinux':           selinux}
 summary_info += {'libdw':             libdw}
 
 summary(summary_info, bool_yn: true, section: 'Dependencies')
+summary(middleware_dep, bool_yn: true, section: 'PARSA')
+
 
 if not supported_cpus.contains(cpu)
   message()
@@ -4356,7 +4396,3 @@ if not supported_oses.contains(targetos)
   message('if you care about QEMU on this platform you should contact')
   message('us upstream at qemu-devel@nongnu.org.')
 endif
-
-summary_info = {}
-summary_info += {'libqflex':          libqflex}
-summary(summary_info, bool_yn: true, section: 'PARSA')
