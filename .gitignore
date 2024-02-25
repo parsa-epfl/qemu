@@ -1,4 +1,5 @@
-middleware/
+middleware/*
+!middleware/.gitkeep
 /GNUmakefile
 /build/
 /.cache/

@@ -1939,7 +1939,9 @@ middleware_option = [
 middleware_dep = {}
 
 foreach name: middleware_option
-  if get_option(name).disabled()
+
+  # If the option are not explicitly enabled
+  if not get_option(name).enabled()
     middleware_dep += {name: not_found}
     continue
   endif
@@ -3434,6 +3436,18 @@ subdir('ui')
 subdir('hw')
 subdir('gdbstub')
 
+#  __        __   __
+# |__)  /\  |__) /__`  /\
+# |    /~~\ |  \ .__/ /~~\
+#! This has to be exactly here, otherwise the object
+#! accessed in middleware/meson.build won't exist (anymore)
+
+if middleware_include
+  subdir('middleware')
+endif
+
+
+
 if enable_modules
   libmodulecommon = static_library('module-common', files('module-common.c') + genh, pic: true, c_args: '-DBUILD_DSO')
   modulecommon = declare_dependency(link_whole: libmodulecommon, compile_args: '-DBUILD_DSO')
@@ -3564,14 +3578,6 @@ specific_ss.add_all(when: 'CONFIG_TCG_BUILTIN', if_true: tcg_module_ss)
 target_modules += { 'accel' : { 'qtest': qtest_module_ss,
                                 'tcg': tcg_real_module_ss }}
 
-#  __        __   __
-# |__)  /\  |__) /__`  /\
-# |    /~~\ |  \ .__/ /~~\
-
-
-if middleware_include
-  subdir('middleware')
-endif
 
 ##############################################
 # Internal static_libraries and dependencies #
