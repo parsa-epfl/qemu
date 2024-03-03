@@ -3652,6 +3652,11 @@ void qemu_init(int argc, char **argv)
                 break;
 
 #endif /* CONFIG_LIBQFLEX */
+#ifdef CONFIG_SAVEVM_EXT
+            case QEMU_OPTION_savevm_external:
+                qemu_log("savevm-external enabled");
+                break;
+#endif
 
             default:
                 error_report("Option not supported in this build");
