@@ -5727,17 +5727,24 @@ SRST
             (qemu) qom-set /objects/iothread1 poll-max-ns 100000
 ERST
 
-#ifdef CONFIG_LIBQFLEX
-
 DEFHEADING()
-
 DEFHEADING(Simulation backend:)
 
+#ifdef CONFIG_LIBQFLEX
 DEF("libqflex", 0, QEMU_OPTION_libqflex,
     "-libqflex	Start custom tracing toward libqflex\n",
     QEMU_ARCH_ARM)
 SRST
-`` -libqflex	Start custom tracing toward libqflex``
+`` -libqflex		Start custom tracing toward libqflex``
+ERST
+#endif
+
+#ifdef CONFIG_SAVEVM_EXT
+DEF("savevm-external", 0, QEMU_OPTION_savevm_external,
+    "-savevm-external	Enable the non-blocking external save\n",
+    QEMU_ARCH_ALL)
+SRST
+`` -savevm-external	Enable the non-blocking external save``
 ERST
 #endif
 
