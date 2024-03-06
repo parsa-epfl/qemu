@@ -2663,7 +2663,16 @@ void qmp_x_exit_preconfig(Error **errp)
     qemu_machine_creation_done();
 
     if (loadvm) {
+        RunState state = autostart ? RUN_STATE_RUNNING : runstate_get();
+#ifdef CONFIG_SNAPVM_EXT
+	if (qemu_snapvm_ext_state.is_enabled)
+		load_snapshot_external(/*loadvm, NULL, false, NULL, -1, &error_fatal*/);
+	else
+        	load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
+#else
         load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
+#endif
+	load_snapshot_resume(state);
     }
     if (replay_mode != REPLAY_MODE_NONE) {
         replay_vmstate_init();
@@ -3599,10 +3608,15 @@ void qemu_init(int argc, char **argv)
                 break;
 
 #endif /* CONFIG_LIBQFLEX */
-#ifdef CONFIG_SAVEVM_EXT
+#ifdef CONFIG_SNAPVM_EXT
             case QEMU_OPTION_savevm_external:
 		        qemu_snapvm_ext_state.is_enabled = true;
                 break;
+
+            case QEMU_OPTION_loadvm_external:
+		        loadvm = optarg;
+                qemu_snapvm_ext_state.is_enabled        = true;
+                qemu_snapvm_ext_state.has_been_loaded   = true;
                 break;
 #endif
 

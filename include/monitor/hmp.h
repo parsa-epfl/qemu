@@ -182,4 +182,11 @@ void hmp_boot_set(Monitor *mon, const QDict *qdict);
 void hmp_info_mtree(Monitor *mon, const QDict *qdict);
 void hmp_info_cryptodev(Monitor *mon, const QDict *qdict);
 
+
+#ifdef CONFIG_SNAPVM_EXT
+void hmp_savevm_external(Monitor *mon, const QDict *qdict);
+void hmp_loadvm_external(Monitor *mon, const QDict *qdict);
+#endif
+
+
 #endif

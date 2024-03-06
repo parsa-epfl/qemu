@@ -379,6 +379,31 @@ SRST
 ERST
 
     {
+          .name       = "savevm-external",
+          .args_type  = "name:s?",
+          .params     = "tag",
+          .help       = "save a VM snapshot. If no tag is provided, a new snapshot is created",
+          .cmd        =  hmp_savevm_external
+    },
+SRST
+ ``savevm-external`` *tag*
+ QFLEX Specific, save an incremental snapshot externaly of the regular snapshot
+ format. The tag create a new directory which will make the furtur snapshot point
+ to the root backing file.
+ERST
+    {
+          .name       = "loadvm-external",
+          .args_type  = "name:s?",
+          .params     = "tag",
+          .help       = "restore a VM snapshot from its tag",
+          .cmd        =  hmp_loadvm_external
+    },
+SRST
+ ``loadvm-external`` *tag*
+ QFLEX Specific, load a snapshot from one of its tag.
+ERST
+
+    {
         .name       = "one-insn-per-tb",
         .args_type  = "option:s?",
         .params     = "[on|off]",
@@ -1102,7 +1127,7 @@ ERST
 
 SRST
 ``dump-guest-memory [-p]`` *filename* *begin* *length*
-  \ 
+  \
 ``dump-guest-memory [-z|-l|-s|-w]`` *filename*
   Dump guest memory to *protocol*. The file can be processed with crash or
   gdb. Without ``-z|-l|-s|-w``, the dump format is ELF.
@@ -1866,4 +1891,3 @@ SRST
 ERST
 
 #endif
-
