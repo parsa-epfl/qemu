@@ -2205,7 +2205,7 @@ config_host_data.set('CONFIG_RBD', rbd.found())
 config_host_data.set('CONFIG_RDMA', rdma.found())
 config_host_data.set('CONFIG_RELOCATABLE', get_option('relocatable'))
 config_host_data.set('CONFIG_SAFESTACK', get_option('safe_stack'))
-config_host_data.set('CONFIG_SAVEVM_EXT', middleware_dep['savevm-external'].found())
+config_host_data.set('CONFIG_SNAPVM_EXT', middleware_dep['savevm-external'].found())
 config_host_data.set('CONFIG_SDL', sdl.found())
 config_host_data.set('CONFIG_SDL_IMAGE', sdl_image.found())
 config_host_data.set('CONFIG_SECCOMP', seccomp.found())
@@ -3310,6 +3310,7 @@ trace_events_subdirs = [
   'crypto',
   'qapi',
   'qom',
+  'middleware',
   'monitor',
   'util',
   'gdbstub',

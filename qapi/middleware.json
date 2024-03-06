@@ -1,0 +1,30 @@
+# -*- Mode: Python -*-
+# vim: filetype=python
+#
+
+
+##
+# @savevm-external:
+#
+# Make a incremental snapshot
+#
+#
+# Returns: nothing on success.
+#
+# Since: 8.2
+#
+##
+{ 'command': 'savevm-external'}
+
+##
+# @loadvm-external:
+#
+# Save an incremental snapshot
+#
+#
+# Returns: nothing on success.
+#
+# Since: 8.2
+#
+##
+{ 'command': 'loadvm-external'}
