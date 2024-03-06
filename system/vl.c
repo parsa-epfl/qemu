@@ -138,6 +138,11 @@
 #include "middleware/libqflex/libqflex-module.h"
 #endif
 
+#ifdef CONFIG_SNAPVM_EXT
+#include "middleware/savevm-external/snapvm-external.h"
+#endif
+
+
 #define MAX_VIRTIO_CONSOLES 1
 
 typedef struct BlockdevOptionsQueueEntry {
@@ -648,6 +653,14 @@ static int cleanup_add_fd(void *opaque, QemuOpts *opts, Error **errp)
 
 static int drive_init_func(void *opaque, QemuOpts *opts, Error **errp)
 {
+
+#ifdef CONFIG_SNAPVM_EXT
+    if (qemu_snapvm_ext_state.is_enabled)
+    {
+        snapvm_init(opts, loadvm, errp);
+    }
+#endif
+
     BlockInterfaceType *block_default_type = opaque;
 
     return drive_new(opts, *block_default_type, errp) == NULL;
@@ -3654,7 +3667,8 @@ void qemu_init(int argc, char **argv)
 #endif /* CONFIG_LIBQFLEX */
 #ifdef CONFIG_SAVEVM_EXT
             case QEMU_OPTION_savevm_external:
-                qemu_log("savevm-external enabled");
+		        qemu_snapvm_ext_state.is_enabled = true;
+                break;
                 break;
 #endif
 

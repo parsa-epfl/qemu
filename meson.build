@@ -1931,14 +1931,17 @@ endif
 # | |   | | | || |\ \ /\__/ / | | |
 # \_|   \_| |_/\_| \_|\____/\_| |_/
 
-middleware_include = false
-middleware_option = [
-  'libqflex',
-  'savevm-external',
-]
-middleware_dep = {}
+libarchive = dependency('libarchive')
 
-foreach name: middleware_option
+middleware_include = false
+middleware_dep = {}
+middleware_option = {
+  'libqflex': [],
+  'savevm-external': [libarchive],
+}
+
+
+foreach name, dep: middleware_option
 
   # If the option are not explicitly enabled
   if not get_option(name).enabled()
@@ -1948,12 +1951,13 @@ foreach name: middleware_option
 
   if fs.is_dir('middleware/' + name)
     # Modify the dictionary directly to set the value for the current key
-    middleware_dep += {name: declare_dependency()}
+    middleware_dep += {name: declare_dependency(dependencies: dep)}
     middleware_include = true
   else
     error('Middleware directory (' + name + ') was not found in "./middleware/"')
   endif
 endforeach
+
 
 #  ___  __ _ _ __ __ _ _ __
 # / __|/ _` | '__/ _` | '_ \

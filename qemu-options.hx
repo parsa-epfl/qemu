@@ -5865,13 +5865,22 @@ SRST
 ERST
 #endif
 
-#ifdef CONFIG_SAVEVM_EXT
+#ifdef CONFIG_SNAPVM_EXT
+
 DEF("savevm-external", 0, QEMU_OPTION_savevm_external,
-    "-savevm-external	Enable the non-blocking external save\n",
+    "-savevm-external	Enable incremental non-blocking snapshot.\n",
     QEMU_ARCH_ALL)
 SRST
 `` -savevm-external	Enable the non-blocking external save``
 ERST
+
+DEF("loadvm-external", 1, QEMU_OPTION_loadvm_external,
+    "-loadvm-external	Load an external snapshot previously made with -savevm-external\n",
+    QEMU_ARCH_ALL)
+SRST
+`` -loadvm-external	Enable the non-blocking external save``
+ERST
+
 #endif
 
 HXCOMM This is the last statement. Insert new options before this line!
