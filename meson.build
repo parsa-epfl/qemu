@@ -1931,13 +1931,11 @@ endif
 # | |   | | | || |\ \ /\__/ / | | |
 # \_|   \_| |_/\_| \_|\____/\_| |_/
 
-libarchive = dependency('libarchive')
-
 middleware_include = false
 middleware_dep = {}
 middleware_option = {
   'libqflex': [],
-  'savevm-external': [libarchive],
+  'savevm-external': [],
 }
 
 
