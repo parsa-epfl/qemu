@@ -2663,16 +2663,16 @@ void qmp_x_exit_preconfig(Error **errp)
     qemu_machine_creation_done();
 
     if (loadvm) {
-        RunState state = autostart ? RUN_STATE_RUNNING : runstate_get();
+
 #ifdef CONFIG_SNAPVM_EXT
 	if (qemu_snapvm_ext_state.is_enabled)
 		load_snapshot_external(/*loadvm, NULL, false, NULL, -1, &error_fatal*/);
 	else
-        	load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
+        load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
 #else
         load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
 #endif
-	load_snapshot_resume(state);
+
     }
     if (replay_mode != REPLAY_MODE_NONE) {
         replay_vmstate_init();
