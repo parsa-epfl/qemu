@@ -5857,7 +5857,7 @@ DEFHEADING()
 DEFHEADING(Simulation backend:)
 
 #ifdef CONFIG_LIBQFLEX
-DEF("libqflex", 0, QEMU_OPTION_libqflex,
+DEF("libqflex", HAS_ARG, QEMU_OPTION_libqflex,
     "-libqflex	Start custom tracing toward libqflex\n",
     QEMU_ARCH_ARM)
 SRST

@@ -3670,7 +3670,7 @@ void qemu_init(int argc, char **argv)
 #ifdef CONFIG_LIBQFLEX
 
             case QEMU_OPTION_libqflex:
-                libqflex_configure();
+                libqflex_parse_opts(optarg);
                 break;
 
 #endif /* CONFIG_LIBQFLEX */
