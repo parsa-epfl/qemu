@@ -378,6 +378,7 @@ SRST
   only *tag* as parameter.
 ERST
 
+#ifdef CONFIG_SNAPVM_EXT
     {
           .name       = "savevm-external",
           .args_type  = "name:s?",
@@ -385,12 +386,14 @@ ERST
           .help       = "save a VM snapshot. If no tag is provided, a new snapshot is created",
           .cmd        =  hmp_savevm_external
     },
+#endif
 SRST
  ``savevm-external`` *tag*
  QFLEX Specific, save an incremental snapshot externaly of the regular snapshot
  format. The tag create a new directory which will make the furtur snapshot point
  to the root backing file.
 ERST
+#ifdef CONFIG_SNAPVM_EXT
     {
           .name       = "loadvm-external",
           .args_type  = "name:s?",
@@ -398,6 +401,7 @@ ERST
           .help       = "restore a VM snapshot from its tag",
           .cmd        =  hmp_loadvm_external
     },
+#endif
 SRST
  ``loadvm-external`` *tag*
  QFLEX Specific, load a snapshot from one of its tag.
