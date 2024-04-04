@@ -28,3 +28,17 @@
 #
 ##
 { 'command': 'loadvm-external'}
+
+##
+# @flexus-save-measure:
+#
+# Save Flexus stats on the disk
+#
+# @path: Diskpath to save the statistics directory
+#
+# Returns: nothing on success.
+#
+# Since: 8.2
+#
+##
+{ 'command': 'flexus-save-measure', 'data': {'*path':'str'} }
