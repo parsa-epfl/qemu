@@ -377,7 +377,19 @@ SRST
   Since 4.0, delvm stopped deleting snapshots by snapshot id, accepting
   only *tag* as parameter.
 ERST
-
+#ifdef CONFIG_LIBQFLEX
+    {
+          .name       = "flexus-save-measure",
+          .args_type  = "name:s?",
+          .params     = "tag",
+          .help       = "Save measurement and statistics on the disk",
+          .cmd        =  hmp_flexus_save_measure
+    },
+SRST
+ ``flexus-save-measure`` *tag*
+  Flexus specific command to save all measurement and statistics on the disk
+ERST
+#endif
 #ifdef CONFIG_SNAPVM_EXT
     {
           .name       = "savevm-external",
@@ -386,13 +398,13 @@ ERST
           .help       = "save a VM snapshot. If no tag is provided, a new snapshot is created",
           .cmd        =  hmp_savevm_external
     },
-#endif
 SRST
  ``savevm-external`` *tag*
  QFLEX Specific, save an incremental snapshot externaly of the regular snapshot
  format. The tag create a new directory which will make the furtur snapshot point
  to the root backing file.
 ERST
+#endif
 #ifdef CONFIG_SNAPVM_EXT
     {
           .name       = "loadvm-external",
@@ -401,11 +413,11 @@ ERST
           .help       = "restore a VM snapshot from its tag",
           .cmd        =  hmp_loadvm_external
     },
-#endif
 SRST
  ``loadvm-external`` *tag*
  QFLEX Specific, load a snapshot from one of its tag.
 ERST
+#endif
 
     {
         .name       = "one-insn-per-tb",
