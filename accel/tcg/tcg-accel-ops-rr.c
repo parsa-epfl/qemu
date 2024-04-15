@@ -37,6 +37,10 @@
 #include "tcg-accel-ops-rr.h"
 #include "tcg-accel-ops-icount.h"
 
+#ifdef CONFIG_LIBQFLEX
+#include "middleware/libqflex/libqflex-module.h"
+#endif
+
 /* Kick all RR vCPUs */
 void rr_kick_vcpu_thread(CPUState *unused)
 {
@@ -214,6 +218,20 @@ static void *rr_cpu_thread_fn(void *arg)
     /* process any pending work */
     cpu->exit_request = 1;
 
+#ifdef CONFIG_LIBQFLEX
+    if (libqflex_is_timing_ready())
+    {
+        flexus_api.start();
+
+        // stop all the cpus
+        CPU_FOREACH(cpu) {
+            cpu->stopped = 1;
+        }
+
+        qemu_mutex_unlock_iothread();
+        goto out;
+    }
+#endif
     while (1) {
         /* Only used for icount_enabled() */
         int64_t cpu_budget = 0;
@@ -301,7 +319,9 @@ static void *rr_cpu_thread_fn(void *arg)
         rr_wait_io_event();
         rr_deal_with_unplugged_cpus();
     }
-
+#ifdef CONFIG_LIBQFLEX
+out:
+#endif
     rcu_remove_force_rcu_notifier(&force_rcu);
     rcu_unregister_thread();
     return NULL;
