@@ -384,12 +384,27 @@ ERST
           .name       = "flexus-save-measure",
           .args_type  = "name:s?",
           .params     = "tag",
-          .help       = "Save measurement and statistics on the disk",
+          .help       = "save measurement and statistics on the disk",
           .cmd        =  hmp_flexus_save_measure
     },
 SRST
  ``flexus-save-measure`` *tag*
   Flexus specific command to save all measurement and statistics on the disk
+ERST
+#endif
+#ifdef CONFIG_LIBQFLEX
+    {
+          .name       = "flexus-save-ckpt",
+          .args_type  = "name:s?",
+          .params     = "tag",
+          .help       = "send a qmp command to flexus to dump its checkpoint on the drive",
+          .cmd        =  hmp_flexus_save_ckpt
+    },
+SRST
+ ``savevm-external`` *tag*
+ QFLEX Specific, save an incremental snapshot externaly of the regular snapshot
+ format. The tag create a new directory which will make the furtur snapshot point
+ to the root backing file.
 ERST
 #endif
 #ifdef CONFIG_SNAPVM_EXT
