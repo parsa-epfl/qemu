@@ -222,7 +222,7 @@ static void *rr_cpu_thread_fn(void *arg)
 #ifdef CONFIG_LIBQFLEX
     if (libqflex_is_timing_ready())
     {
-        flexus_api.start();
+        flexus_api.start(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
 
         // stop all the cpus
         CPU_FOREACH(cpu) {
