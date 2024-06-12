@@ -749,7 +749,7 @@ static bool arm_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 
 static bool arm_cpu_check_interrupt(CPUState *cs, int interrupt_request)
 {
-    CPUARMState *env = cpu_env(cs);
+    CPUARMState *env = cs->env_ptr;
     uint32_t cur_el = arm_current_el(env);
     bool secure = arm_is_secure(env);
     uint64_t hcr_el2 = arm_hcr_el2_eff(env);
