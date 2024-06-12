@@ -2739,7 +2739,6 @@ void qemu_init(int argc, char **argv)
     qemu_add_opts(&qemu_libqflex_opts);
 #endif
 
-    qemu_add_run_with_opts();
     module_call_init(MODULE_INIT_OPTS);
 
     error_init(argv[0]);
@@ -3558,49 +3557,6 @@ void qemu_init(int argc, char **argv)
             case QEMU_OPTION_nouserconfig:
                 /* Nothing to be parsed here. Especially, do not error out below. */
                 break;
-#if defined(CONFIG_POSIX)
-            case QEMU_OPTION_runas:
-                if (!os_set_runas(optarg)) {
-                    error_report("User \"%s\" doesn't exist"
-                                 " (and is not <uid>:<gid>)",
-                                 optarg);
-                    exit(1);
-                }
-                break;
-            case QEMU_OPTION_chroot:
-                warn_report("option is deprecated,"
-                            " use '-run-with chroot=...' instead");
-                os_set_chroot(optarg);
-                break;
-            case QEMU_OPTION_daemonize:
-                os_set_daemonize(true);
-                break;
-#if defined(CONFIG_LINUX)
-            /* deprecated */
-            case QEMU_OPTION_asyncteardown:
-                init_async_teardown();
-                break;
-#endif
-            case QEMU_OPTION_run_with: {
-                const char *str;
-                opts = qemu_opts_parse_noisily(qemu_find_opts("run-with"),
-                                                         optarg, false);
-                if (!opts) {
-                    exit(1);
-                }
-#if defined(CONFIG_LINUX)
-                if (qemu_opt_get_bool(opts, "async-teardown", false)) {
-                    init_async_teardown();
-                }
-#endif
-                str = qemu_opt_get(opts, "chroot");
-                if (str) {
-                    os_set_chroot(str);
-                }
-                break;
-            }
-#endif /* CONFIG_POSIX */
-
 #ifdef CONFIG_LIBQFLEX
 
             case QEMU_OPTION_libqflex:
