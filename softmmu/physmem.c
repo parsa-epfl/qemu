@@ -781,16 +781,19 @@ AddressSpace *cpu_get_address_space(CPUState *cpu, int asidx)
 }
 
 /* Called from RCU critical section */
-static RAMBlock *qemu_get_ram_block(ram_addr_t addr)
+static RAMBlock *qemu_get_ram_block(ram_addr_t *addr, bool *en)
 {
     RAMBlock *block;
 
+    if (en)
+        *en = false;
+
     block = qatomic_rcu_read(&ram_list.mru_block);
-    if (block && addr - block->offset < block->max_length) {
+    if (block && *addr - block->offset < block->max_length) {
         return block;
     }
     RAMBLOCK_FOREACH(block) {
-        if (addr - block->offset < block->max_length) {
+        if (*addr - block->offset < block->max_length) {
             goto found;
         }
     }
@@ -824,18 +827,19 @@ static void tlb_reset_dirty_range_all(ram_addr_t start, ram_addr_t length)
     CPUState *cpu;
     ram_addr_t start1;
     RAMBlock *block;
-    ram_addr_t end;
 
     assert(tcg_enabled());
-    end = TARGET_PAGE_ALIGN(start + length);
     start &= TARGET_PAGE_MASK;
 
+    ram_addr_t phys_start = start;
+    bool       phys_en;
+
     RCU_READ_LOCK_GUARD();
-    block = qemu_get_ram_block(start);
-    assert(block == qemu_get_ram_block(end - 1));
-    start1 = (uintptr_t)ramblock_ptr(block, start - block->offset);
+    if ((block = qemu_get_ram_block(&phys_start, &phys_en)) == NULL)
+        return;
+    start1 = (uintptr_t)ramblock_ptr(block, phys_start - block->offset);
     CPU_FOREACH(cpu) {
-        tlb_reset_dirty(cpu, start1, length);
+        tlb_reset_dirty(cpu, phys_en ? start : start1, length);
     }
 }
 
@@ -854,16 +858,19 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
         return false;
     }
 
-    end = TARGET_PAGE_ALIGN(start + length) >> TARGET_PAGE_BITS;
-    start_page = start >> TARGET_PAGE_BITS;
-    page = start_page;
+    ram_addr_t phys_start = start;
 
     WITH_RCU_READ_LOCK_GUARD() {
         blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
-        ramblock = qemu_get_ram_block(start);
+        if ((ramblock = qemu_get_ram_block(&phys_start, NULL)) == NULL)
+            return false;
         /* Range sanity check on the ramblock */
-        assert(start >= ramblock->offset &&
-               start + length <= ramblock->offset + ramblock->used_length);
+        assert(phys_start >= ramblock->offset &&
+               phys_start + length <= ramblock->offset + ramblock->used_length);
+
+        end = TARGET_PAGE_ALIGN(phys_start + length) >> TARGET_PAGE_BITS;
+        start_page = phys_start >> TARGET_PAGE_BITS;
+        page = start_page;
 
         while (page < end) {
             unsigned long idx = page / DIRTY_MEMORY_BLOCK_SIZE;
@@ -2118,7 +2125,8 @@ void *qemu_map_ram_ptr(RAMBlock *ram_block, ram_addr_t addr)
     RAMBlock *block = ram_block;
 
     if (block == NULL) {
-        block = qemu_get_ram_block(addr);
+        if ((block = qemu_get_ram_block(&addr, NULL)) == NULL)
+            return block;
         addr -= block->offset;
     }
 
@@ -2150,7 +2158,8 @@ static void *qemu_ram_ptr_length(RAMBlock *ram_block, ram_addr_t addr,
     }
 
     if (block == NULL) {
-        block = qemu_get_ram_block(addr);
+        if ((block = qemu_get_ram_block(&addr, NULL)) == NULL)
+            return NULL;
         addr -= block->offset;
     }
     *size = MIN(*size, block->max_length - addr);
@@ -2207,7 +2216,7 @@ RAMBlock *qemu_ram_block_from_host(void *ptr, bool round_offset,
         ram_addr_t ram_addr;
         RCU_READ_LOCK_GUARD();
         ram_addr = xen_ram_addr_from_mapcache(ptr);
-        block = qemu_get_ram_block(ram_addr);
+        block = qemu_get_ram_block(&ram_addr, NULL);
         if (block) {
             *offset = ram_addr - block->offset;
         }
@@ -2847,11 +2856,11 @@ MemTxResult address_space_set(AddressSpace *as, hwaddr addr,
     return error;
 }
 
-void cpu_physical_memory_rw(hwaddr addr, void *buf,
+MemTxResult cpu_physical_memory_rw(hwaddr addr, void *buf,
                             hwaddr len, bool is_write)
 {
-    address_space_rw(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED,
-                     buf, len, is_write);
+    return address_space_rw(&address_space_memory, addr, MEMTXATTRS_UNSPECIFIED,
+                            buf, len, is_write);
 }
 
 enum write_rom_type {

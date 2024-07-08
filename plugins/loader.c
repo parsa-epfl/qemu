@@ -168,11 +168,6 @@ static uint64_t xorshift64star(uint64_t x)
     return x * UINT64_C(2685821657736338717);
 }
 
-/**
- * Author:
- *      Yuanlong Li
- *  Load plugin internally, instead of using the -plugin command line.
- */
 qemu_plugin_id_t qemu_plugin_register_builtin(void) {
     struct qemu_plugin_ctx *ctx;
 

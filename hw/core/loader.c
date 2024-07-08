@@ -514,6 +514,58 @@ ssize_t load_elf_ram_sym(const char *filename,
     return ret;
 }
 
+static void load_elf_sym(const char *filename) {
+    uint8_t hdr[sizeof(Elf64_Ehdr)];
+
+    int  fd;
+    if ((fd = open(filename, O_RDONLY | O_BINARY)) < 0)
+        return;
+
+    if (read(fd, hdr, EI_NIDENT) != EI_NIDENT)
+        goto end;
+
+    if ((hdr[0] != ELFMAG0) ||
+        (hdr[1] != ELFMAG1) ||
+        (hdr[2] != ELFMAG2) ||
+        (hdr[3] != ELFMAG3))
+        goto end;
+
+    size_t sz  = (hdr[EI_CLASS] == ELFCLASS64) ?
+                      sizeof(Elf64_Ehdr) :
+                      sizeof(Elf32_Ehdr);
+    size_t rem = sz - EI_NIDENT;
+
+    if (read(fd, hdr + EI_NIDENT, rem) != rem)
+        goto end;
+
+    if (hdr[EI_CLASS] == ELFCLASS64)
+        load_symbols64((Elf64_Ehdr *)(hdr), fd, 0, 0, NULL);
+    else
+        load_symbols32((Elf32_Ehdr *)(hdr), fd, 0, 0, NULL);
+
+end:
+    close(fd);
+}
+
+void load_sym(const char *filenames) {
+    if (!filenames)
+        return;
+
+    char *all = g_strdup(filenames);
+    char *cur;
+    char *nxt;
+
+    for (cur = all; (nxt = strchr(cur, ',')); cur = nxt + 1) {
+        nxt[0] = 0;
+        load_elf_sym(cur);
+    }
+
+    if (cur[0])
+        load_elf_sym(cur);
+
+    g_free(all);
+}
+
 static void bswap_uboot_header(uboot_image_header_t *hdr)
 {
 #if !HOST_BIG_ENDIAN

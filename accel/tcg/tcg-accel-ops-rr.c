@@ -36,11 +36,11 @@
 #include "tcg-accel-ops.h"
 #include "tcg-accel-ops-rr.h"
 #include "tcg-accel-ops-icount.h"
+#include "migration/snapshot.h"
+#include "qapi/qapi-commands-control.h"
 
-#ifdef CONFIG_LIBQFLEX
-#include "middleware/libqflex/libqflex-module.h"
-#include "middleware/libqflex/libqflex.h"
-#endif
+#include "qflex/qflex.h"
+#include "qflex/qflex-api.h"
 
 /* Kick all RR vCPUs */
 void rr_kick_vcpu_thread(CPUState *unused)
@@ -186,6 +186,7 @@ static void *rr_cpu_thread_fn(void *arg)
 {
     Notifier force_rcu;
     CPUState *cpu = arg;
+    bool done;
 
     assert(tcg_enabled());
     rcu_register_thread();
@@ -219,9 +220,10 @@ static void *rr_cpu_thread_fn(void *arg)
     /* process any pending work */
     cpu->exit_request = 1;
 
-#ifdef CONFIG_LIBQFLEX
-    if (libqflex_is_timing_ready())
-    {
+    // set asynchronously
+    done = qflex_state.enabled;
+
+    if (qflex_state.enabled && qflex_state.timing) {
         flexus_api.start(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
 
         // stop all the cpus
@@ -232,10 +234,25 @@ static void *rr_cpu_thread_fn(void *arg)
         qemu_mutex_unlock_iothread();
         goto out;
     }
-#endif
+
     while (1) {
+        // trace should have already stopped
+        if (qflex_state.update > 1) {
+            qflex_state.update = 0;
+
+            // the core states are clean now
+            Error *err = NULL;
+            savevm_external("adv", &err);
+
+            // we cannot simply quit at the time flexus asks,
+            // as the snapshot should be taken lazily while the
+            // resources, especially the ram block, is still
+            // reference counted
+            qmp_quit(&err);
+        }
+
         /* Only used for icount_enabled() */
-        int64_t cpu_budget = 0;
+        int64_t cpu_budget = 1;
 
         qemu_mutex_unlock_iothread();
         replay_mutex_lock();
@@ -252,7 +269,8 @@ static void *rr_cpu_thread_fn(void *arg)
              */
             icount_handle_deadline();
 
-            cpu_budget = icount_percpu_budget(cpu_count);
+            if (qflex_state.enabled == 0)
+                cpu_budget = icount_percpu_budget(cpu_count);
         }
 
         replay_mutex_unlock();
@@ -320,50 +338,17 @@ static void *rr_cpu_thread_fn(void *arg)
         rr_wait_io_event();
         rr_deal_with_unplugged_cpus();
     }
-#ifdef CONFIG_LIBQFLEX
+
 out:
-#endif
+    if (done)
+        qflex_done();
+
     rcu_remove_force_rcu_notifier(&force_rcu);
     rcu_unregister_thread();
     return NULL;
 }
 
-void rr_start_vcpu_thread(CPUState *cpu)
-{
-    char thread_name[VCPU_THREAD_NAME_SIZE];
-    static QemuCond *single_tcg_halt_cond;
-    static QemuThread *single_tcg_cpu_thread;
-
-    g_assert(tcg_enabled());
-    tcg_cpu_init_cflags(cpu, false);
-
-    if (!single_tcg_cpu_thread) {
-        cpu->thread = g_new0(QemuThread, 1);
-        cpu->halt_cond = g_new0(QemuCond, 1);
-        qemu_cond_init(cpu->halt_cond);
-
-        /* share a single thread for all cpus with TCG */
-        snprintf(thread_name, VCPU_THREAD_NAME_SIZE, "ALL CPUs/TCG");
-        qemu_thread_create(cpu->thread, thread_name,
-                           rr_cpu_thread_fn,
-                           cpu, QEMU_THREAD_JOINABLE);
-
-        single_tcg_halt_cond = cpu->halt_cond;
-        single_tcg_cpu_thread = cpu->thread;
-    } else {
-        /* we share the thread */
-        cpu->thread = single_tcg_cpu_thread;
-        cpu->halt_cond = single_tcg_halt_cond;
-        cpu->thread_id = first_cpu->thread_id;
-        cpu->can_do_io = 1;
-        cpu->created = true;
-    }
-}
-
-
-#ifdef CONFIG_LIBQFLEX
-uint64_t
-libqflex_step(CPUState* cpu)
+int qflex_step(CPUState *cpu)
 {
     int r = 0;
 
@@ -445,4 +430,48 @@ out:
 
     return r;
 }
-#endif
+
+void qflex_tick(void)
+{
+    assert(qflex_state.enabled && qflex_state.timing);
+
+    // proceed one clock cycle
+    icount_tick();
+
+    // fire qemu timers to generate guest timer interrupts
+    icount_account_warp_timer();
+
+    icount_handle_deadline();
+}
+
+void rr_start_vcpu_thread(CPUState *cpu)
+{
+    char thread_name[VCPU_THREAD_NAME_SIZE];
+    static QemuCond *single_tcg_halt_cond;
+    static QemuThread *single_tcg_cpu_thread;
+
+    g_assert(tcg_enabled());
+    tcg_cpu_init_cflags(cpu, false);
+
+    if (!single_tcg_cpu_thread) {
+        cpu->thread = g_new0(QemuThread, 1);
+        cpu->halt_cond = g_new0(QemuCond, 1);
+        qemu_cond_init(cpu->halt_cond);
+
+        /* share a single thread for all cpus with TCG */
+        snprintf(thread_name, VCPU_THREAD_NAME_SIZE, "ALL CPUs/TCG");
+        qemu_thread_create(cpu->thread, thread_name,
+                           rr_cpu_thread_fn,
+                           cpu, QEMU_THREAD_JOINABLE);
+
+        single_tcg_halt_cond = cpu->halt_cond;
+        single_tcg_cpu_thread = cpu->thread;
+    } else {
+        /* we share the thread */
+        cpu->thread = single_tcg_cpu_thread;
+        cpu->halt_cond = single_tcg_halt_cond;
+        cpu->thread_id = first_cpu->thread_id;
+        cpu->can_do_io = 1;
+        cpu->created = true;
+    }
+}

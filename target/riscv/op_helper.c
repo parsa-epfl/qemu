@@ -24,6 +24,11 @@
 #include "qemu/main-loop.h"
 #include "exec/exec-all.h"
 #include "exec/helper-proto.h"
+#include "qemu/log.h"
+
+#include "qflex/qflex.h"
+#include "qflex/qflex-api.h"
+#include "qflex/qflex-arch.h"
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
@@ -374,7 +379,8 @@ void helper_wfi(CPURISCVState *env)
                (prv_u || (prv_s && get_field(env->hstatus, HSTATUS_VTW)))) {
         riscv_raise_exception(env, RISCV_EXCP_VIRT_INSTRUCTION_FAULT, GETPC());
     } else {
-        cs->halted = 1;
+        if (!qflex_state.enabled)
+            cs->halted = 1;
         cs->exception_index = EXCP_HLT;
         cpu_loop_exit(cs);
     }

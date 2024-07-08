@@ -457,6 +457,9 @@ int print_insn_rx(bfd_vma, disassemble_info *);
 int print_insn_hexagon(bfd_vma, disassemble_info *);
 int print_insn_loongarch(bfd_vma, disassemble_info *);
 
+void dis_insn(void *dat);
+void fmt_insn(void *dat, char *buf, size_t len);
+
 #ifdef CONFIG_CAPSTONE
 bool cap_disas_target(disassemble_info *info, uint64_t pc, size_t size);
 bool cap_disas_host(disassemble_info *info, const void *code, size_t size);

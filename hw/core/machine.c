@@ -345,6 +345,21 @@ static void machine_set_dtb(Object *obj, const char *value, Error **errp)
     ms->dtb = g_strdup(value);
 }
 
+static char *machine_get_sym(Object *obj, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    return g_strdup(ms->sym);
+}
+
+static void machine_set_sym(Object *obj, const char *value, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    g_free(ms->sym);
+    ms->sym = g_strdup(value);
+}
+
 static char *machine_get_dumpdtb(Object *obj, Error **errp)
 {
     MachineState *ms = MACHINE(obj);
@@ -957,6 +972,11 @@ static void machine_class_init(ObjectClass *oc, void *data)
     object_class_property_set_description(oc, "dtb",
         "Linux kernel device tree file");
 
+    object_class_property_add_str(oc, "sym",
+        machine_get_sym, machine_set_sym);
+    object_class_property_set_description(oc, "sym",
+        "Symbol files");
+
     object_class_property_add_str(oc, "dumpdtb",
         machine_get_dumpdtb, machine_set_dumpdtb);
     object_class_property_set_description(oc, "dumpdtb",
@@ -1123,6 +1143,7 @@ static void machine_finalize(Object *obj)
     g_free(ms->initrd_filename);
     g_free(ms->kernel_cmdline);
     g_free(ms->dtb);
+    g_free(ms->sym);
     g_free(ms->dumpdtb);
     g_free(ms->dt_compatible);
     g_free(ms->firmware);

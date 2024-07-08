@@ -338,6 +338,7 @@ struct MachineState {
 
     void *fdt;
     char *dtb;
+    char *sym;
     char *dumpdtb;
     int phandle_start;
     char *dt_compatible;

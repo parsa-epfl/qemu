@@ -32,6 +32,11 @@
 #include "cpu_bits.h"
 #include "debug.h"
 #include "tcg/oversized-guest.h"
+#include "disas/riscv.h"
+
+#include "qflex/qflex.h"
+#include "qflex/qflex-api.h"
+#include "qflex/qflex-arch.h"
 
 int riscv_cpu_mmu_index(CPURISCVState *env, bool ifetch)
 {
@@ -1180,6 +1185,9 @@ void riscv_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
                                      int mmu_idx, MemTxAttrs attrs,
                                      MemTxResult response, uintptr_t retaddr)
 {
+    if (qflex_state.enabled && !cs->icount_budget)
+        longjmp(qflex_state.jump, 1);
+
     RISCVCPU *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
 
@@ -1364,6 +1372,9 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     } else if (probe) {
         return false;
     } else {
+        if (qflex_state.enabled && !cs->icount_budget)
+            longjmp(qflex_state.jump, 2);
+
         raise_mmu_exception(env, address, access_type, pmp_violation,
                             first_stage_error, two_stage_lookup,
                             two_stage_indirect_error);
@@ -1783,4 +1794,447 @@ void riscv_cpu_do_interrupt(CPUState *cs)
     env->two_stage_indirect_lookup = false;
 #endif
     cs->exception_index = RISCV_EXCP_NONE; /* mark handled to qemu */
+}
+
+uint32_t QFLEX_GET_ARCH(inst)(CPUState *cs, uint64_t addr)
+{
+    CPURISCVState *env = cs->env_ptr;
+    jmp_buf jump;
+
+    qflex_state.jump = jump;
+
+    if (setjmp(qflex_state.jump))
+        return ~0;
+
+    uint32_t lo = cpu_lduw_code(cs->env_ptr, env->pc) & 0xffff;
+    uint32_t hi = cpu_lduw_code(cs->env_ptr, env->pc + 2);
+
+    return lo | (((lo & 0x3) == 0x3) ? (hi << 16) : 0);
+}
+
+char *QFLEX_GET_ARCH(dis)(CPUState *cs, uint64_t addr)
+{
+    CPURISCVState *env = cs->env_ptr;
+    jmp_buf jump;
+
+    qflex_state.jump = jump;
+
+    if (setjmp(qflex_state.jump)) {
+        GString *str = g_string_new("<fault>");
+        char    *buf = str->str;
+
+        g_string_free(str, false);
+        return buf;
+    }
+
+    uint32_t lo = cpu_lduw_code(cs->env_ptr, addr);
+    uint32_t hi = cpu_lduw_code(cs->env_ptr, addr + 2);
+
+    lo = lo & 0xffff;
+    uint32_t inst = lo | (((lo & 0x3) == 0x3) ? (hi << 16) : 0);
+
+    rv_decode dec = {
+        .cfg  = (RISCVCPUConfig *)(riscv_cpu_cfg(env)),
+        .pc   =  addr,
+        .inst =  inst
+    };
+
+    char *buf = malloc(128);
+    memset(buf, 0, 128);
+
+    dis_insn(&dec);
+    fmt_insn(&dec, buf, 128);
+
+    return buf;
+}
+
+uint64_t QFLEX_GET_ARCH(csr)(CPUState *cs, int csrno)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    uint64_t ret;
+
+    if (riscv_csrrw_debug(env, csrno, &ret, 0, 0) != RISCV_EXCP_NONE)
+        return 0;
+
+    return ret;
+}
+
+uint64_t QFLEX_GET_ARCH(fpr)(CPUState *cs, int idx)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    return env->fpr[idx];
+}
+
+uint64_t QFLEX_GET_ARCH(gpr)(CPUState *cs, int idx)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    return env->gpr[idx];
+}
+
+uint32_t QFLEX_GET_ARCH(irq)(CPUState *cs)
+{
+    if (cs->interrupt_request & CPU_INTERRUPT_HARD) {
+        CPURISCVState *env = cs->env_ptr;
+
+        return RISCV_EXCP_INT_FLAG |
+               riscv_cpu_local_irq_pending(env);
+    }
+
+    return ~0;
+}
+
+uint64_t QFLEX_GET_ARCH(pc)(CPUState *cs)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    return env->pc;
+}
+
+uint64_t QFLEX_GET_ARCH(pa)(CPUState *cs, uint64_t addr, int access)
+{
+    // don't interact with the tlb for now
+    CPURISCVState *env = cs->env_ptr;
+
+    // special bypasses
+    if ((env->priv == PRV_M) && !(access & 0x8)) {
+        if (addr >= 0x40000000000lu)
+            return ~0lu;
+        else
+            return addr;
+    }
+
+    if (get_field(env->satp, SATP64_MODE) == 0)
+        return addr;
+
+    uint64_t ret;
+    uint64_t fpa;
+
+    int prot;
+    int idx = cpu_mmu_index(env, false);
+
+    // backdoor with s-mode privilege
+    if (access & ~0x3)
+        idx = PRV_S;
+
+    // frontdoor without virtualization
+    if (get_physical_address(env, &ret, &prot, addr, &fpa, access & 0x3,
+                             idx, true, false, false) != TRANSLATE_SUCCESS)
+        return ~0lu;
+
+    return ret;
+}
+
+uint64_t QFLEX_GET_ARCH(pl)(CPUState *cs)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    return env->priv;
+}
+
+char *QFLEX_GET_ARCH(snap)(CPUState *cs)
+{
+    GString *str = g_string_new("");
+
+    CPURISCVState *env = cs->env_ptr;
+
+    g_string_append_printf(str, "c%ld (%lx, %llx)\n",
+                                 env->mhartid,
+                                 env->pc,
+                                 get_field(env->satp, SATP64_ASID));
+
+    for (int i = 0; i < 32; i++)
+        g_string_append_printf(str, "  r%02d: %016lx\n", i, env->gpr[i]);
+
+    char *ret = str->str;
+
+    g_string_free(str, false);
+    return ret;
+}
+
+void QFLEX_SET_ARCH(pc)(CPUState *cs, uint64_t pc)
+{
+    CPURISCVState *env = cs->env_ptr;
+
+    env->pc = pc;
+}
+
+static bool riscv_dec_br(qflex_insn_t *insn, int t)
+{
+    insn->br_type = t;
+
+    return true;
+}
+
+#define fallthrough __attribute__((fallthrough))
+
+enum {
+    LU,
+    LD,
+    ST,
+    AU,
+    AM
+};
+
+static bool riscv_dec_mem(qflex_insn_t *insn, int t, int s)
+{
+    insn->is_mem = true;
+
+    insn->mem.size      = s;
+    insn->mem.is_signed = true;
+
+    switch (t) {
+    case LU:
+        insn->mem.is_signed = false;
+        fallthrough;
+    case LD:
+        insn->mem.is_load   = true;
+        break;
+    case ST:
+        insn->mem.is_store  = true;
+        break;
+    case AU:
+        insn->mem.is_signed = false;
+        fallthrough;
+    case AM:
+        insn->mem.is_atomic = true;
+        break;
+    }
+
+    return true;
+}
+
+static bool riscv_dec(qflex_insn_t *insn)
+{
+    uint32_t opcode = insn->insn;
+
+    insn->is_mem  = false;
+    insn->br_type = QEMU_Non_Branch;
+
+    switch (extract32(opcode, 0, 2)) {
+    case 0:
+        switch (extract32(opcode, 13, 3)) {
+        case 2: // c.lw
+            return riscv_dec_mem(insn, LD, 4);
+        case 3: // c.ld
+            return riscv_dec_mem(insn, LD, 8);
+        case 6: // c.sw
+            return riscv_dec_mem(insn, ST, 4);
+        case 7: // c.sd
+            return riscv_dec_mem(insn, ST, 8);
+        }
+        break;
+
+    case 1:
+        switch (extract32(opcode, 13, 3)) {
+        case 5: // c.j
+            return riscv_dec_br(insn, QEMU_Unconditional_Branch);
+        case 6: // c.beqz
+            return riscv_dec_br(insn, QEMU_Conditional_Branch);
+        case 7: // c.bnez
+            return riscv_dec_br(insn, QEMU_Conditional_Branch);
+        }
+        break;
+
+    case 2:
+        switch (extract32(opcode, 13, 3)) {
+        case 2:
+            switch (extract32(opcode, 7, 5)) {
+            case 0:
+                break;
+            default: // c.lwsp
+                return riscv_dec_mem(insn, LD, 4);
+            }
+            break;
+        case 3:
+            switch (extract32(opcode, 7, 5)) {
+            case 0:
+                break;
+            default: // c.ldsp
+                return riscv_dec_mem(insn, LD, 8);
+            }
+            break;
+        case 4:
+            switch (extract32(opcode, 12, 1)) {
+            case 0:
+                switch (extract32(opcode, 2, 5)) {
+                case 0:
+                    switch (extract32(opcode, 7, 5)) {
+                    case 0:
+                        break;
+                    default: // c.jr
+                        return riscv_dec_br(insn, QEMU_IndirectReg_Branch);
+                    }
+                    break;
+                }
+                break;
+            case 1:
+                switch (extract32(opcode, 2, 5)) {
+                case 0:
+                    switch (extract32(opcode, 7, 5)) {
+                    case 0:
+                        break;
+                    default: // c.jalr
+                        return riscv_dec_br(insn, QEMU_IndirectCall_Branch);
+                    }
+                    break;
+                }
+                break;
+            }
+            break;
+        case 6: // c.swsp
+            return riscv_dec_mem(insn, ST, 4);
+        case 7: // c.sdsp
+            return riscv_dec_mem(insn, ST, 8);
+        }
+        break;
+
+    case 3:
+        switch (extract32(opcode, 2, 5)) {
+        case 0x1b: // jal
+            if (extract32(opcode, 7, 5))
+                return riscv_dec_br(insn, QEMU_Call_Branch);
+            else
+                return riscv_dec_br(insn, QEMU_Unconditional_Branch);
+            break;
+
+        case 0x19:
+            switch (extract32(opcode, 12, 3)) {
+            case 0: // jalr
+                if (extract32(insn->insn, 7, 5))
+                    insn->br_type = QEMU_IndirectCall_Branch;
+                else if (extract32(insn->insn, 15, 5) == 1)
+                    insn->br_type = QEMU_Return_Branch;
+                else
+                    insn->br_type = QEMU_IndirectReg_Branch;
+                break;
+            }
+            break;
+
+        case 0x18:
+            switch (extract32(opcode, 12, 3)) {
+            case 0: // beq
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            case 1: // bne
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            case 4: // blt
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            case 5: // bge
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            case 6: // bltu
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            case 7: // bgeu
+                return riscv_dec_br(insn, QEMU_Conditional_Branch);
+            }
+            break;
+
+        case 0x00:
+            switch (extract32(opcode, 12, 3)) {
+            case 0: // lb
+                return riscv_dec_mem(insn, LD, 1);
+            case 1: // lh
+                return riscv_dec_mem(insn, LD, 2);
+            case 2: // lw
+                return riscv_dec_mem(insn, LD, 4);
+            case 3: // ld
+                return riscv_dec_mem(insn, LD, 8);
+            case 4: // lbu
+                return riscv_dec_mem(insn, LU, 1);
+            case 5: // lhu
+                return riscv_dec_mem(insn, LU, 2);
+            case 6: // lwu
+                return riscv_dec_mem(insn, LU, 4);
+            }
+            break;
+
+        case 0x08:
+            switch (extract32(opcode, 12, 3)) {
+            case 0: // sb
+                return riscv_dec_mem(insn, ST, 1);
+            case 1: // sh
+                return riscv_dec_mem(insn, ST, 2);
+            case 2: // sw
+                return riscv_dec_mem(insn, ST, 4);
+            case 3: // sd
+                return riscv_dec_mem(insn, ST, 8);
+            }
+            break;
+
+        case 0x03:
+            switch (extract32(opcode, 12, 3)) {
+            case 0: // fence
+                return riscv_dec_br(insn, QEMU_Barrier_Branch);
+            case 1: // fence.i
+                return riscv_dec_br(insn, QEMU_Barrier_Branch);
+            }
+            break;
+
+        case 0x0b:
+            switch (extract32(opcode, 12, 3)) {
+            case 2:
+                switch (extract32(opcode, 27, 5)) {
+                case 0x02: // lr.w
+                    return riscv_dec_mem(insn, LD, 4);
+                case 0x03: // sc.w
+                    return riscv_dec_mem(insn, ST, 4);
+                case 0x01: // amoswap.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x00: // amoadd.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x04: // amoxor.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x0c: // amoand.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x08: // amoor.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x10: // amomin.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x14: // amomax.w
+                    return riscv_dec_mem(insn, AM, 4);
+                case 0x18: // amominu.w
+                    return riscv_dec_mem(insn, AU, 4);
+                case 0x1c: // amomaxu.w
+                    return riscv_dec_mem(insn, AU, 4);
+                }
+                break;
+            case 3:
+                switch (extract32(opcode, 27, 5)) {
+                case 0x02: // lr.d
+                    return riscv_dec_mem(insn, LD, 8);
+                case 0x03: // sc.d
+                    return riscv_dec_mem(insn, ST, 8);
+                case 0x01: // amoswap.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x00: // amoadd.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x04: // amoxor.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x0c: // amoand.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x08: // amoor.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x10: // amomin.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x14: // amomax.d
+                    return riscv_dec_mem(insn, AM, 8);
+                case 0x18: // amominu.d
+                    return riscv_dec_mem(insn, AU, 8);
+                case 0x1c: // amomaxu.d
+                    return riscv_dec_mem(insn, AU, 8);
+                }
+                break;
+            }
+            break;
+        }
+        break;
+    }
+
+    return true;
+}
+
+void QFLEX_GET_ARCH(dec)(qflex_insn_t *insn)
+{
+    riscv_dec(insn);
 }

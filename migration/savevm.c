@@ -57,6 +57,7 @@
 #include "block/snapshot.h"
 #include "qemu/cutils.h"
 #include "io/channel-buffer.h"
+#include "io/channel-command.h"
 #include "io/channel-file.h"
 #include "sysemu/replay.h"
 #include "sysemu/runstate.h"
@@ -69,6 +70,11 @@
 #include "yank_functions.h"
 #include "sysemu/qtest.h"
 #include "options.h"
+#include "block/block_int-common.h"
+#include "qapi/qapi-commands-block-core.h"
+
+#include "qflex/qflex.h"
+#include "qflex/qflex-api.h"
 
 const unsigned int postcopy_ram_discard_version;
 
@@ -1603,7 +1609,7 @@ void qemu_savevm_state_cleanup(void)
     }
 }
 
-int qemu_savevm_state(QEMUFile *f, Error **errp)
+static int qemu_savevm_state(QEMUFile *f, Error **errp)
 {
     int ret;
     MigrationState *ms = migrate_get_current();
@@ -3441,4 +3447,247 @@ void qmp_snapshot_delete(const char *job_id,
     s->devices = QAPI_CLONE(strList, devices);
 
     job_start(&s->common);
+}
+
+bool loadvm_external_create_overlay(const char *name,
+                                    const char *file, 
+                                    const char *fmt,
+                                    GString *overlay,
+                                    Error **errp)
+{
+    GDateTime *now = g_date_time_new_now_local();
+
+    char *post = g_date_time_format(now, "%y%m%d-%H%M%S");
+    char *base = g_path_get_basename(file);
+
+    if (name)
+        g_string_printf(overlay, "%s/%s-%s", name, base, post);
+    else
+        g_string_printf(overlay, "%s-%s", file, post);
+
+    bdrv_img_create(overlay->str, fmt, file, fmt, NULL, -1, 0, false, errp);
+
+    g_free(now);
+    g_free(post);
+    g_free(base);
+
+    return *errp == NULL;
+}
+
+static bool savevm_external_bdrv(BlockDriverState *bs,
+                                 const char *name,
+                                 Error **errp)
+{
+    GString *buf = g_string_new("");
+
+    char *base = g_path_get_basename(bs->filename);
+
+    g_string_printf(buf, "%s/%s", name, base);
+    g_free(base);
+
+    // take a synchroneous snapshot
+    const char* dev = bdrv_get_device_name(bs);
+    qmp_blockdev_snapshot_sync(dev, NULL, buf->str, NULL, "qcow2", true,
+                               NEW_IMAGE_MODE_ABSOLUTE_PATHS, errp);
+
+    g_string_free(buf, true);
+    return !*errp;
+}
+
+static char *get_vmstate(const char *name)
+{
+    GString *buf = g_string_new("");
+    g_string_printf(buf, "%s/vmstate", name);
+
+    return g_string_free(buf, false);
+}
+
+static char *get_zstd(Error **errp)
+{
+    char *zstd = g_find_program_in_path("zstd");
+    if (!zstd)
+        error_setg(errp, "zstd not found in PATH");
+
+    return zstd;
+}
+
+static BlockDriverState *get_bdrv(Error **errp, const char *name)
+{
+    g_autoptr(GList) bdrvs = NULL;
+    bdrv_all_get_snapshot_devices(false, NULL, &bdrvs, errp);
+
+    BlockDriverState *ret = NULL;
+
+    // typically there is only one main writable bdrv
+    GList *iterbdrvs = bdrvs;
+    while (iterbdrvs) {
+        BlockDriverState *bs = iterbdrvs->data;
+
+        if (!bdrv_is_read_only(bs)) {
+            ret = bs;
+
+            if (name) {
+                if (!savevm_external_bdrv(bs, name, errp))
+                    return NULL;
+            } else
+                return bs;
+        }
+
+        iterbdrvs = iterbdrvs->next;
+    }
+
+    return ret;
+}
+
+bool loadvm_external(const char *name, Error **errp)
+{
+    if (!name || !errp)
+        return false;
+
+    bool running = runstate_is_running();
+
+    char *vmstate = get_vmstate(name);
+    char *zstd    = get_zstd(errp);
+
+    if (!vmstate || !zstd)
+        goto out;
+
+    if (running) {
+        vm_stop(RUN_STATE_RESTORE_VM);
+        qemu_system_reset(SHUTDOWN_CAUSE_SNAPSHOT_LOAD);
+    }
+
+    BlockDriverState *bs = get_bdrv(errp, NULL);
+
+    /*
+     * Flush the record/replay queue. Now the VM state is going
+     * to change. Therefore we don't need to preserve its consistency
+     */
+    replay_flush_events();
+
+    // vmstate to stdout
+    const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", vmstate, NULL};
+
+    QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
+    if (!ioc)
+        goto out;
+
+    qio_channel_set_name(QIO_CHANNEL(ioc), "loadvm-external");
+
+    /* restore the VM state */
+    QEMUFile *f = qemu_file_new_input(QIO_CHANNEL(ioc));
+
+    MigrationIncomingState *mis = migration_incoming_get_current();
+    mis->from_src_file = f;
+
+    if (!yank_register_instance(MIGRATION_YANK_INSTANCE, errp))
+        goto out;
+
+    AioContext *context = bdrv_get_aio_context(bs);
+
+    /* Flush all IO requests so they don't interfere with the new state.  */
+    if (bs)
+        bdrv_drain_all_begin();
+
+    aio_context_acquire(context);
+    if (qemu_loadvm_state(f) < 0)
+        error_setg(errp, "Failed to load the vm state file %s", vmstate);
+    aio_context_release(context);
+
+    migration_incoming_state_destroy();
+
+    if (bs)
+        bdrv_drain_all_end();
+
+out:
+    if (*errp)
+        error_report_err(*errp);
+
+    if (running)
+        vm_start();
+
+    g_free(vmstate);
+    g_free(zstd);
+
+    return !*errp;
+}
+
+bool savevm_external(const char *name, Error **errp)
+{
+    if (!name || !errp)
+        return false;
+
+    GLOBAL_STATE_CODE();
+
+    bool running = runstate_is_running();
+
+    if (migration_is_blocked(errp))
+        return false;
+
+    if (!replay_can_snapshot()) {
+        error_setg(errp, "Record/replay does not allow making snapshot "
+                   "right now. Try once more later.");
+        return false;
+    }
+
+    if (!bdrv_all_can_snapshot(false, NULL, errp))
+        return false;
+
+    g_mkdir_with_parents(name, 0755);
+
+    char *vmstate = get_vmstate(name);
+    char *zstd    = get_zstd(errp);
+
+    if (!vmstate || !zstd)
+        goto out;
+
+    global_state_store();
+
+    if (running)
+        vm_stop(RUN_STATE_SAVE_VM);
+
+    BlockDriverState *bs = get_bdrv(errp, name);
+    if (*errp)
+        goto out;
+
+    // stdin to vmstate
+    const char *args[] = {zstd, "-f", "-q", "-T0", "-o", vmstate, NULL};
+
+    QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_WRONLY, errp);
+    if (!ioc)
+        goto out;
+
+    qio_channel_set_name(QIO_CHANNEL(ioc), "savevm-external");
+
+    /* save the VM state */
+    QEMUFile *f = qemu_file_new_output(QIO_CHANNEL(ioc));
+
+    AioContext *context = bdrv_get_aio_context(bs);
+
+    if (bs)
+        bdrv_drain_all_begin();
+
+    aio_context_acquire(context);
+    if (qemu_savevm_state(f, errp) >= 0) {
+        qemu_file_transferred_noflush(f);
+
+        if (qemu_fclose(f) < 0)
+            error_setg(errp, "Cannot close the vm state file %s", vmstate);
+    }
+    aio_context_release(context);
+
+    if (bs)
+        bdrv_drain_all_end();
+
+out:
+    if (*errp)
+        error_report_err(*errp);
+
+    if (running)
+        vm_start();
+
+    g_free(vmstate);
+    g_free(zstd);
+
+    return !*errp;
 }

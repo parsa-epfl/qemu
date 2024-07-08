@@ -4,7 +4,7 @@
 /* A small part of this API is split into its own header */
 #include "qemu/log-for-trace.h"
 
-/* 
+/*
  * The new API:
  */
 

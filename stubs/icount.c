@@ -10,6 +10,10 @@ void icount_update(CPUState *cpu)
 {
     abort();
 }
+void icount_tick(void)
+{
+    abort();
+}
 void icount_configure(QemuOpts *opts, Error **errp)
 {
     /* signal error */

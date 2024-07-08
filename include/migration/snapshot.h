@@ -61,4 +61,16 @@ bool delete_snapshot(const char *name,
                     bool has_devices, strList *devices,
                     Error **errp);
 
+extern bool snapshot_external;
+
+bool loadvm_external_create_overlay(const char *name,
+                                    const char *file,
+                                    const char *fmt,
+                                    GString *overlay,
+                                    Error **errp);
+
+bool loadvm_external(const char *name, Error **errp);
+
+bool savevm_external(const char *name, Error **errp);
+
 #endif

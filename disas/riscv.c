@@ -4602,7 +4602,7 @@ static size_t inst_length(rv_inst inst)
 static void append(char *s1, const char *s2, size_t n)
 {
     size_t l1 = strlen(s1);
-    if (n - l1 - 1 > 0) {
+    if ((int64_t)(n) - (int64_t)(l1) > 1) {
         strncat(s1, s2, n - l1);
     }
 }
@@ -5000,6 +5000,23 @@ disasm_inst(char *buf, size_t buflen, rv_isa isa, uint64_t pc, rv_inst inst,
     decode_inst_decompress(&dec, isa);
     decode_inst_lift_pseudo(&dec);
     format_inst(buf, buflen, 24, &dec);
+}
+
+void dis_insn(void *dat) {
+    rv_decode *dec = (rv_decode *)(dat);
+
+    dec->opcode_data = rvi_opcode_data;
+
+    decode_inst_opcode     (dec, rv64);
+    decode_inst_operands   (dec, rv64);
+    decode_inst_decompress (dec, rv64);
+    decode_inst_lift_pseudo(dec);
+}
+
+void fmt_insn(void *dat, char *buf, size_t len) {
+    rv_decode *dec = (rv_decode *)(dat);
+
+    format_inst(buf, len, 16, dec);
 }
 
 #define INST_FMT_2 "%04" PRIx64 "              "

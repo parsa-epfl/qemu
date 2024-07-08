@@ -39,6 +39,10 @@
 #include "sysemu/cpu-timers.h"
 #include "sysemu/cpu-throttle.h"
 #include "timers-state.h"
+#include "migration/snapshot.h"
+
+#include "qflex/qflex.h"
+#include "qflex/qflex-api.h"
 
 /*
  * ICOUNT: Instruction Counter
@@ -88,6 +92,27 @@ static void icount_update_locked(CPUState *cpu)
     int64_t executed = icount_get_executed(cpu);
     cpu->icount_budget -= executed;
 
+    if (qflex_state.enabled) {
+        if (qflex_state.timing ||
+          !(qflex_state.cycles_mask & (1 << cpu->cpu_index)))
+            return;
+
+        if (qflex_state.cycles > 0) {
+            qflex_state.cycles -= executed;
+
+            if (qflex_state.cycles <= 0) {
+                if (qflex_state.update) {
+                    g_mkdir_with_parents("adv", 0700);
+
+                    // snap before exit
+                    flexus_api.qmp(QMP_FLEXUS_DOSAVE, "adv");
+                }
+
+                flexus_api.stop();
+            }
+        }
+    }
+
     qatomic_set_i64(&timers_state.qemu_icount,
                     timers_state.qemu_icount + executed);
 }
@@ -102,6 +127,18 @@ void icount_update(CPUState *cpu)
     seqlock_write_lock(&timers_state.vm_clock_seqlock,
                        &timers_state.vm_clock_lock);
     icount_update_locked(cpu);
+    seqlock_write_unlock(&timers_state.vm_clock_seqlock,
+                         &timers_state.vm_clock_lock);
+}
+
+void icount_tick(void)
+{
+    seqlock_write_lock(&timers_state.vm_clock_seqlock,
+                       &timers_state.vm_clock_lock);
+
+    qatomic_set_i64(&timers_state.qemu_icount,
+                     timers_state.qemu_icount + 1);
+
     seqlock_write_unlock(&timers_state.vm_clock_seqlock,
                          &timers_state.vm_clock_lock);
 }

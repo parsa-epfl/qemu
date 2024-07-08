@@ -33,6 +33,8 @@
 #include "hw/intc/intc.h"
 #include "hw/rdma/rdma.h"
 
+#include "qflex/qflex.h"
+
 NameInfo *qmp_query_name(Error **errp)
 {
     NameInfo *info = g_malloc0(sizeof(*info));
@@ -60,6 +62,16 @@ void qmp_stop(Error **errp)
         autostart = 0;
     } else {
         vm_stop(RUN_STATE_PAUSED);
+    }
+
+    if (qflex_state.enabled) {
+        qflex_state.enabled = false;
+
+        // see: rr_cpu_thread_fn
+        if (qflex_state.update && (qflex_state.cycles <= 0))
+            qflex_state.update++;
+        else
+            qmp_quit(errp);
     }
 }
 

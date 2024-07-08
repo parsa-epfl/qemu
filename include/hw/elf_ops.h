@@ -161,7 +161,8 @@ static void glue(load_symbols, SZ)(struct elfhdr *ehdr, int fd, int must_swab,
            Throw everything else away.  */
         if (syms[i].st_shndx == SHN_UNDEF ||
                 syms[i].st_shndx >= SHN_LORESERVE ||
-                ELF_ST_TYPE(syms[i].st_info) != STT_FUNC) {
+              ((ELF_ST_TYPE(syms[i].st_info) != STT_FUNC) &&
+               (ELF_ST_TYPE(syms[i].st_info) != STT_NOTYPE))) {
             nsyms--;
             if (i < nsyms) {
                 syms[i] = syms[nsyms];

@@ -3915,6 +3915,13 @@ SRST
     kernel on boot.
 ERST
 
+DEF("sym", HAS_ARG, QEMU_OPTION_sym, \
+    "-sym    file[,file[,...]]  load symbols from `file`s\n", QEMU_ARCH_ALL)
+SRST
+``-sym file[,file[,...]]``
+    Load symbols from files.
+ERST
+
 SRST
 
 Finally you can also manually load images directly into the address
@@ -4481,6 +4488,18 @@ DEF("loadvm", HAS_ARG, QEMU_OPTION_loadvm, \
 SRST
 ``-loadvm file``
     Start right away with a saved state (``loadvm`` in monitor)
+ERST
+
+DEF("loadvm-external", HAS_ARG, QEMU_OPTION_loadvm_external,
+    "-loadvm-external [snap-name]\n", QEMU_ARCH_ALL)
+SRST
+``-loadvm-extenral snap-name``
+ERST
+
+DEF("savevm-external", 0, QEMU_OPTION_savevm_external,
+    "-savevm-external\n", QEMU_ARCH_ALL)
+SRST
+``-savevm-extenral``
 ERST
 
 #ifndef _WIN32
@@ -5727,35 +5746,12 @@ SRST
             (qemu) qom-set /objects/iothread1 poll-max-ns 100000
 ERST
 
-DEFHEADING()
-DEFHEADING(Simulation backend:)
-
-#ifdef CONFIG_LIBQFLEX
-DEF("libqflex", HAS_ARG, QEMU_OPTION_libqflex,
-    "-libqflex	Start custom tracing toward libqflex\n",
-    QEMU_ARCH_ARM)
+DEF("qflex", HAS_ARG, QEMU_OPTION_qflex,
+    "-qflex arguments\n"
+    "                Executes a single instruction per iteration\n", QEMU_ARCH_RISCV)
 SRST
-`` -libqflex		Start custom tracing toward libqflex``
+``-qflex arguments``
 ERST
-#endif
-
-#ifdef CONFIG_SNAPVM_EXT
-
-DEF("savevm-external", 0, QEMU_OPTION_savevm_external,
-    "-savevm-external	Enable incremental non-blocking snapshot.\n",
-    QEMU_ARCH_ALL)
-SRST
-`` -savevm-external	Enable the non-blocking external save``
-ERST
-
-DEF("loadvm-external", 1, QEMU_OPTION_loadvm_external,
-    "-loadvm-external	Load an external snapshot previously made with -savevm-external\n",
-    QEMU_ARCH_ALL)
-SRST
-`` -loadvm-external	Enable the non-blocking external save``
-ERST
-
-#endif
 
 HXCOMM This is the last statement. Insert new options before this line!
 

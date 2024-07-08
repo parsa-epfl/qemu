@@ -82,13 +82,6 @@ typedef struct qemu_info_t {
     };
 } qemu_info_t;
 
-/**
- *
- * Author:
- *      Yuanlong Li
- * Load plugin internally, instead of using the -plugin command line.
- * Added to load the trace plugin for QFlex
- */
 qemu_plugin_id_t qemu_plugin_register_builtin(void);
 
 /**

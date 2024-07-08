@@ -44,6 +44,9 @@
 #include "tb-context.h"
 #include "internal.h"
 
+#include "qflex/qflex.h"
+#include "qflex/qflex-arch.h"
+
 /* -icount align implementation. */
 
 typedef struct SyncClocks {
@@ -422,10 +425,6 @@ const void *HELPER(lookup_tb_ptr)(CPUArchState *env)
     tb = tb_lookup(cpu, pc, cs_base, flags, cflags);
     if (tb == NULL) {
         return tcg_code_gen_epilogue;
-    }
-
-    if (qemu_loglevel_mask(CPU_LOG_TB_CPU | CPU_LOG_EXEC)) {
-        log_cpu_exec(pc, cpu, tb);
     }
 
     return tb->tc.ptr;
@@ -963,18 +962,35 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
-    int ret;
+    int ret = 0;
+    int cur_expt = -1;
+
+    if (qflex_state.enabled && qflex_state.timing)
+        if ((cpu->exception_index >= 0) && (cpu->exception_index < EXCP_INTERRUPT))
+            cur_expt = cpu->exception_index;
 
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
         TranslationBlock *last_tb = NULL;
         int tb_exit = 0;
 
+        if (qflex_state.enabled && qflex_state.timing) {
+            if (cur_expt != -1)
+                return cur_expt;
+
+            if (cpu->interrupt_request)
+                cur_expt = QFLEX_GET_ARCH(irq)(cpu);
+        }
+
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
             TranslationBlock *tb;
             vaddr pc;
             uint64_t cs_base;
             uint32_t flags, cflags;
+
+            if (qflex_state.enabled && qflex_state.timing)
+                if (cur_expt != -1)
+                    return cur_expt;
 
             cpu_get_tb_cpu_state(cpu->env_ptr, &pc, &cs_base, &flags);
 
@@ -1042,6 +1058,9 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);
+
+            if (qflex_state.enabled && qflex_state.timing)
+                return -1;
         }
     }
     return ret;

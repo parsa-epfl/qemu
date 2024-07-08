@@ -119,7 +119,7 @@ typedef struct CPUTLBEntryFull {
     MemTxAttrs attrs;
 
     /* @prot contains the complete protections for the page. */
-    uint8_t prot;
+    int prot;
 
     /* @lg_page_size contains the log2 of the page size. */
     uint8_t lg_page_size;

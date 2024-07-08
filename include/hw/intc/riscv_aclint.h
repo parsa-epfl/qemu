@@ -33,6 +33,7 @@ typedef struct RISCVAclintMTimerState {
     SysBusDevice parent_obj;
     uint64_t time_delta;
     uint64_t *timecmp;
+    uint64_t *expire;
     QEMUTimer **timers;
 
     /*< public >*/

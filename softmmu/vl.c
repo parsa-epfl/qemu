@@ -135,14 +135,8 @@
 #include "qemu/guest-random.h"
 #include "qemu/keyval.h"
 
-#ifdef CONFIG_LIBQFLEX
-#include "middleware/libqflex/libqflex-module.h"
-#endif
-
-#ifdef CONFIG_SNAPVM_EXT
-#include "middleware/savevm-external/snapvm-external.h"
-#endif
-
+#include "qflex/qflex.h"
+#include "qflex/qflex-opts.h"
 
 #define MAX_VIRTIO_CONSOLES 1
 
@@ -191,7 +185,9 @@ static const char *log_file;
 static bool list_data_dirs;
 static const char *qtest_chrdev;
 static const char *qtest_log;
-static bool opt_one_insn_per_tb;
+
+bool singlestep;
+bool snapshot_external = false;
 
 static int has_defaults = 1;
 static int default_serial = 1;
@@ -651,17 +647,32 @@ static int cleanup_add_fd(void *opaque, QemuOpts *opts, Error **errp)
 
 static int drive_init_func(void *opaque, QemuOpts *opts, Error **errp)
 {
-
-#ifdef CONFIG_SNAPVM_EXT
-    if (qemu_snapvm_ext_state.is_enabled)
-    {
-        snapvm_init(opts, loadvm, errp);
-    }
-#endif
-
     BlockInterfaceType *block_default_type = opaque;
 
     return drive_new(opts, *block_default_type, errp) == NULL;
+}
+
+static int drive_init_func_external(void *opaque, QemuOpts *opts, Error **errp)
+{
+    const char *readonly = qemu_opt_get(opts, "readonly");
+
+    if (snapshot_external && (!readonly || g_str_equal(readonly, "off"))) {
+        g_autoptr(GString) overlay = g_string_new("");
+
+        const char *file   = qemu_opt_get(opts, "file");
+        const char *format = qemu_opt_get(opts, "format");
+
+        // default
+        format = format ?: "qcow2";
+
+        // load the new overlay from last backed image
+        loadvm_external_create_overlay(loadvm, file, format, overlay, errp);
+
+        // open the newly created overlay to not require lock of base image
+        qemu_opt_set(opts, "file", overlay->str, errp);
+    }
+
+    return drive_init_func(opaque, opts, errp);
 }
 
 static int drive_enable_snapshot(void *opaque, QemuOpts *opts, Error **errp)
@@ -720,7 +731,7 @@ static void configure_blockdev(BlockdevOptionsQueue *bdo_queue,
         qemu_opts_foreach(qemu_find_opts("drive"), drive_enable_snapshot,
                           NULL, NULL);
     }
-    if (qemu_opts_foreach(qemu_find_opts("drive"), drive_init_func,
+    if (qemu_opts_foreach(qemu_find_opts("drive"), drive_init_func_external,
                           &machine_class->block_default_type, &error_fatal)) {
         /* We printed help */
         exit(0);
@@ -2261,7 +2272,7 @@ static int do_configure_accelerator(void *opaque, QemuOpts *opts, Error **errp)
      * silently ignore for any other accelerator (which is how this
      * option has always behaved).
      */
-    if (opt_one_insn_per_tb) {
+    if (singlestep) {
         /*
          * This will always succeed for TCG, and we want to ignore
          * the error from trying to set a nonexistent property
@@ -2662,18 +2673,9 @@ void qmp_x_exit_preconfig(Error **errp)
     qemu_create_cli_devices();
     qemu_machine_creation_done();
 
-    if (loadvm) {
+    if (loadvm)
+        loadvm_external(loadvm, &error_fatal);
 
-#ifdef CONFIG_SNAPVM_EXT
-	if (qemu_snapvm_ext_state.is_enabled)
-		load_snapshot_external(/*loadvm, NULL, false, NULL, -1, &error_fatal*/);
-	else
-        load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
-#else
-        load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
-#endif
-
-    }
     if (replay_mode != REPLAY_MODE_NONE) {
         replay_vmstate_init();
     }
@@ -2734,10 +2736,7 @@ void qemu_init(int argc, char **argv)
     qemu_add_opts(&qemu_semihosting_config_opts);
     qemu_add_opts(&qemu_fw_cfg_opts);
     qemu_add_opts(&qemu_action_opts);
-
-#ifdef CONFIG_LIBQFLEX
-    qemu_add_opts(&qemu_libqflex_opts);
-#endif
+    qemu_add_opts(&qemu_qflex_opts);
 
     module_call_init(MODULE_INIT_OPTS);
 
@@ -2880,6 +2879,9 @@ void qemu_init(int argc, char **argv)
             case QEMU_OPTION_dtb:
                 qdict_put_str(machine_opts_dict, "dtb", optarg);
                 break;
+            case QEMU_OPTION_sym:
+                qdict_put_str(machine_opts_dict, "sym", optarg);
+                break;
             case QEMU_OPTION_cdrom:
                 drive_add(IF_DEFAULT, 2, optarg, CDROM_OPTS);
                 break;
@@ -3021,7 +3023,7 @@ void qemu_init(int argc, char **argv)
                 qdict_put_str(machine_opts_dict, "firmware", optarg);
                 break;
             case QEMU_OPTION_singlestep:
-                opt_one_insn_per_tb = true;
+                singlestep = true;
                 break;
             case QEMU_OPTION_S:
                 autostart = 0;
@@ -3224,6 +3226,13 @@ void qemu_init(int argc, char **argv)
                 break;
             case QEMU_OPTION_loadvm:
                 loadvm = optarg;
+                break;
+            case QEMU_OPTION_savevm_external:
+                snapshot_external = true;
+                break;
+            case QEMU_OPTION_loadvm_external:
+                loadvm = optarg;
+                snapshot_external = true;
                 break;
             case QEMU_OPTION_full_screen:
                 dpy.has_full_screen = true;
@@ -3557,25 +3566,9 @@ void qemu_init(int argc, char **argv)
             case QEMU_OPTION_nouserconfig:
                 /* Nothing to be parsed here. Especially, do not error out below. */
                 break;
-#ifdef CONFIG_LIBQFLEX
-
-            case QEMU_OPTION_libqflex:
-                libqflex_parse_opts(optarg);
+            case QEMU_OPTION_qflex:
+                qflex_parse_opts(popt->index, optarg, &error_abort);
                 break;
-
-#endif /* CONFIG_LIBQFLEX */
-#ifdef CONFIG_SNAPVM_EXT
-            case QEMU_OPTION_savevm_external:
-		        qemu_snapvm_ext_state.is_enabled = true;
-                break;
-
-            case QEMU_OPTION_loadvm_external:
-		        loadvm = optarg;
-                qemu_snapvm_ext_state.is_enabled        = true;
-                qemu_snapvm_ext_state.has_been_loaded   = true;
-                break;
-#endif
-
             default:
                 if (os_parse_cmd_args(popt->index, optarg)) {
                     error_report("Option not supported in this build");
@@ -3706,15 +3699,6 @@ void qemu_init(int argc, char **argv)
     os_setup_post();
     resume_mux_open();
 
-#ifdef CONFIG_LIBQFLEX
-    /**
-     *
-     * Bryan Perdrizat
-     *      Previous developers seem to have put the initialisation
-     *      of (lib)QFlex at the very end of the main initialisation (right there).
-     *      I leave it it here, unaware of its past whereabouts.
-     */
-    libqflex_init();
-
-#endif
+    if (qflex_state.lib_path)
+        qflex_init(&error_fatal, loadvm);
 }

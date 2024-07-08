@@ -116,3 +116,8 @@ elif cpu in ['x86', 'x86_64']
 elif cpu in ['ppc', 'ppc64']
   util_ss.add(files('cpuinfo-ppc.c'))
 endif
+
+qflex_ss = ss.source_set()
+subdir('qflex')
+
+util_ss.add_all(qflex_ss)

@@ -291,6 +291,7 @@ static void riscv_aclint_mtimer_realize(DeviceState *dev, Error **errp)
 
     s->timers = g_new0(QEMUTimer *, s->num_harts);
     s->timecmp = g_new0(uint64_t, s->num_harts);
+    s->expire = g_new0(uint64_t, s->num_harts);
     /* Claim timer interrupt bits */
     for (i = 0; i < s->num_harts; i++) {
         RISCVCPU *cpu = RISCV_CPU(cpu_by_arch_id(s->hartid_base + i));
@@ -317,12 +318,39 @@ static void riscv_aclint_mtimer_reset_enter(Object *obj, ResetType type)
     riscv_aclint_mtimer_write(mtimer, mtimer->time_base, 0, 8);
 }
 
+static int riscv_aclint_mtimer_vmstate_pre_save(void *opaque)
+{
+    RISCVAclintMTimerState *s = opaque;
+
+    for (int i = 0; i < s->num_harts; i++)
+        if (s->timers[i]->expire_time != -1)
+            s->expire[i] = s->timers[i]->expire_time / s->timers[i]->scale;
+
+    return 0;
+}
+
+static int riscv_aclint_mtimer_vmstate_post_load(void *opaque, int version_id)
+{
+    RISCVAclintMTimerState *s = opaque;
+
+    for (int i = 0; i < s->num_harts; i++)
+        if (s->expire[i] != -1)
+            timer_mod(s->timers[i], s->expire[i]);
+
+    return 0;
+}
+
 static const VMStateDescription vmstate_riscv_mtimer = {
     .name = "riscv_mtimer",
     .version_id = 1,
     .minimum_version_id = 1,
+    .pre_save = riscv_aclint_mtimer_vmstate_pre_save,
+    .post_load = riscv_aclint_mtimer_vmstate_post_load,
     .fields = (VMStateField[]) {
             VMSTATE_VARRAY_UINT32(timecmp, RISCVAclintMTimerState,
+                                  num_harts, 0,
+                                  vmstate_info_uint64, uint64_t),
+            VMSTATE_VARRAY_UINT32(expire, RISCVAclintMTimerState,
                                   num_harts, 0,
                                   vmstate_info_uint64, uint64_t),
             VMSTATE_END_OF_LIST()
@@ -392,6 +420,7 @@ DeviceState *riscv_aclint_mtimer_create(hwaddr addr, hwaddr size,
         s->timers[i] = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                   &riscv_aclint_mtimer_cb, cb);
         s->timecmp[i] = 0;
+        s->expire[i] = -1;
 
         qdev_connect_gpio_out(dev, i,
                               qdev_get_gpio_in(DEVICE(rvcpu), IRQ_M_TIMER));

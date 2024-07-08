@@ -37,6 +37,8 @@ extern int use_icount;
  */
 void icount_update(CPUState *cpu);
 
+void icount_tick(void);
+
 /* get raw icount value */
 int64_t icount_get_raw(void);
 

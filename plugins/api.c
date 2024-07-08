@@ -51,6 +51,8 @@
 #include "loader.h"
 #endif
 #endif
+#include "sysemu/cpus.h"
+#include "softmmu/timers-state.h"
 
 /* Uninstall and Reset handlers */
 

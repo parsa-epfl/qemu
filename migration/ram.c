@@ -62,6 +62,7 @@
 #include "options.h"
 #include "sysemu/dirtylimit.h"
 #include "sysemu/kvm.h"
+#include "migration/snapshot.h"
 
 #include "hw/boards.h" /* for machine_dump_guest_core() */
 
@@ -2499,7 +2500,8 @@ static void ram_save_cleanup(void *opaque)
              * memory_global_dirty_log_stop will assert that
              * memory_global_dirty_log_start/stop used in pairs
              */
-            memory_global_dirty_log_stop(GLOBAL_DIRTY_MIGRATION);
+            if (!snapshot_external)
+                memory_global_dirty_log_stop(GLOBAL_DIRTY_MIGRATION);
         }
     }
 
@@ -2874,7 +2876,12 @@ static void ram_list_init_bitmaps(void)
              * guest memory.
              */
             block->bmap = bitmap_new(pages);
-            bitmap_set(block->bmap, 0, pages);
+
+            if (snapshot_external)
+                bitmap_clear(block->bmap, 0, pages);
+            else
+                bitmap_set(block->bmap, 0, pages);
+
             block->clear_bmap_shift = shift;
             block->clear_bmap = bitmap_new(clear_bmap_size(pages, shift));
         }
@@ -3869,6 +3876,35 @@ void colo_flush_ram_cache(void)
     trace_colo_flush_ram_cache_end();
 }
 
+static inline void ram_list_clean(ram_addr_t start, ram_addr_t length)
+{
+    unsigned long page = BIT_WORD(start >> TARGET_PAGE_BITS);
+
+    /* start address is aligned at the start of a word? */
+    if (((page = BITS_PER_LONG) << TARGET_PAGE_BITS) == start) {
+        long k;
+        long n = BITS_TO_LONGS(length >> TARGET_PAGE_BITS);
+
+        unsigned long **src;
+        unsigned long idx  = (page * BITS_PER_LONG) / DIRTY_MEMORY_BLOCK_SIZE;
+        unsigned long offs =  BIT_WORD((page * BITS_PER_LONG) % DIRTY_MEMORY_BLOCK_SIZE);
+
+        WITH_RCU_READ_LOCK_GUARD() {
+            src = qatomic_rcu_read(&ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION])->blocks;
+
+            for (k = page; k < page + n; k++) {
+                if (src[idx][offs])
+                    qatomic_set(&src[idx][offs], 0);
+
+                if (++offs == BITS_TO_LONGS(DIRTY_MEMORY_BLOCK_SIZE)) {
+                    offs = 0;
+                    idx++;
+                }
+            }
+        }
+    }
+}
+
 /**
  * ram_load_precopy: load pages in precopy case
  *
@@ -4017,6 +4053,9 @@ static int ram_load_precopy(QEMUFile *f)
                                  "accept migration", id);
                     ret = -EINVAL;
                 }
+
+                if (snapshot_external)
+                    ram_list_clean(addr, block->used_length);
 
                 total_ram_bytes -= length;
             }

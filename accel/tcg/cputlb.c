@@ -235,7 +235,8 @@ static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
     desc->large_page_addr = -1;
     desc->large_page_mask = -1;
     desc->vindex = 0;
-    memset(fast->table, -1, sizeof_tlb(fast));
+
+    memset(fast->table,  -1, sizeof(CPUTLBEntry) * tlb_n_entries(fast));
     memset(desc->vtable, -1, sizeof(desc->vtable));
 }
 
@@ -1404,8 +1405,12 @@ static uint64_t io_readx(CPUArchState *env, CPUTLBEntryFull *full,
     save_iotlb_data(cpu, section, mr_offset);
 
     {
+        MemTxAttrs attrs;
+        attrs = full->attrs;
+        attrs.env = env;
+
         QEMU_IOTHREAD_LOCK_GUARD();
-        r = memory_region_dispatch_read(mr, mr_offset, &val, op, full->attrs);
+        r = memory_region_dispatch_read(mr, mr_offset, &val, op, attrs);
     }
 
     if (r != MEMTX_OK) {
@@ -1444,15 +1449,18 @@ static void io_writex(CPUArchState *env, CPUTLBEntryFull *full,
     save_iotlb_data(cpu, section, mr_offset);
 
     {
+        MemTxAttrs attrs;
+        attrs = full->attrs;
+        attrs.env = env;
+
         QEMU_IOTHREAD_LOCK_GUARD();
-        r = memory_region_dispatch_write(mr, mr_offset, val, op, full->attrs);
+        r = memory_region_dispatch_write(mr, mr_offset, val, op, attrs);
     }
 
     if (r != MEMTX_OK) {
         hwaddr physaddr = mr_offset +
             section->offset_within_address_space -
             section->offset_within_region;
-
         cpu_transaction_failed(cpu, physaddr, addr, memop_size(op),
                                MMU_DATA_STORE, mmu_idx, full->attrs, r,
                                retaddr);

@@ -419,6 +419,39 @@ void hmp_delvm(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, err);
 }
 
+void hmp_loadvm_external(Monitor *mon, const QDict *qdict)
+{
+    if (!snapshot_external) {
+        monitor_printf(mon, "Please activate `savevm-external' to use external snapshots.\n");
+        return;
+    }
+
+    int saved_vm_running = runstate_is_running();
+    const char *name = qdict_get_str(qdict, "name");
+    Error *err = NULL;
+
+    vm_stop(RUN_STATE_RESTORE_VM);
+
+    if (loadvm_external(name, &err) && saved_vm_running)
+        vm_start();
+
+    hmp_handle_error(mon, err);
+}
+
+void hmp_savevm_external(Monitor *mon, const QDict *qdict)
+{
+    if (!snapshot_external) {
+        monitor_printf(mon, "Please activate `savevm-external' to use external snapshots.\n");
+        return;
+    }
+
+    Error *err = NULL;
+
+    savevm_external(qdict_get_try_str(qdict, "name"), &err);
+
+    hmp_handle_error(mon, err);
+}
+
 void hmp_migrate_cancel(Monitor *mon, const QDict *qdict)
 {
     qmp_migrate_cancel(NULL);

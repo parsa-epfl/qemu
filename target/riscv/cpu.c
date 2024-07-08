@@ -33,6 +33,8 @@
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "fpu/softfloat-helpers.h"
+#include "disas/disas.h"
+#include "disas/riscv.h"
 #include "sysemu/kvm.h"
 #include "sysemu/tcg.h"
 #include "kvm_riscv.h"
@@ -167,6 +169,14 @@ static void isa_ext_update_enabled(RISCVCPU *cpu,
 
     *ext_enabled = en;
 }
+
+const char * const riscv_int_short_regnames[] = {
+  "$0", "ra", "sp", "gp", "tp", "t0", "t1",
+  "t2", "s0", "s1", "a0", "a1", "a2", "a3",
+  "a4", "a5", "a6", "a7", "s2", "s3", "s4",
+  "s5", "s6", "s7", "s8", "s9", "sa", "sb",
+  "t3", "t4", "t5", "t6"
+};
 
 const char * const riscv_int_regnames[] = {
     "x0/zero", "x1/ra",  "x2/sp",  "x3/gp",  "x4/tp",  "x5/t0",   "x6/t1",
@@ -640,8 +650,38 @@ static ObjectClass *riscv_cpu_class_by_name(const char *cpu_model)
 
 static void riscv_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 {
-    RISCVCPU *cpu = RISCV_CPU(cs);
+    RISCVCPU      *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
+
+    // a more normal trace. works precisely only when -singlestep is provided
+    uint32_t lo   = cpu_lduw_code(cs->env_ptr, env->pc) & 0xffff;
+    uint32_t hi   = cpu_lduw_code(cs->env_ptr, env->pc + 2);
+    uint32_t inst = lo | (((lo & 0x3) == 0x3) ? (hi << 16) : 0);
+
+    rv_decode dec = {
+        .cfg  = (RISCVCPUConfig *)(riscv_cpu_cfg(env)),
+        .pc   =  env->pc,
+        .inst =  inst
+    };
+
+    char buf[128] = {0};
+
+    dis_insn(&dec);
+    fmt_insn(&dec, buf, sizeof(buf));
+
+    qemu_fprintf(f, "%02ld:%016lx %08x %s:%016lx %s:%016lx %-44s %s\n",
+                     env->mhartid,
+                     env->pc,
+                     inst,
+                     riscv_int_short_regnames[dec.rs1], env->gpr[dec.rs1],
+                     riscv_int_short_regnames[dec.rs2], env->gpr[dec.rs2],
+                     buf,
+                     lookup_symbol(env->pc));
+    fflush(f);
+
+    return;
+
+#if 0
     int i, j;
     uint8_t *p;
 
@@ -762,6 +802,7 @@ static void riscv_cpu_dump_state(CPUState *cs, FILE *f, int flags)
             qemu_fprintf(f, "\n");
         }
     }
+#endif
 }
 
 static void riscv_cpu_set_pc(CPUState *cs, vaddr value)

@@ -85,3 +85,10 @@ config SPIKE
     select HTIF
     select RISCV_ACLINT
     select SIFIVE_PLIC
+
+config LITE
+    bool
+    select MSI_NONBROKEN
+    select RISCV_NUMA
+    select RISCV_ACLINT
+    select SIFIVE_PLIC

@@ -33,6 +33,11 @@
 #define EXCP_YIELD      0x10004 /* cpu wants to yield timeslice to another */
 #define EXCP_ATOMIC     0x10005 /* stop-the-world and emulate atomic */
 
+#define EXCP_QFLEX_IDLE    0x10010
+#define EXCP_QFLEX_UNPLUG  0x10011
+#define EXCP_QFLEX_STOP    0x10012
+#define EXCP_QFLEX_UNKNOWN 0x10013
+
 /* some important defines:
  *
  * HOST_BIG_ENDIAN : whether the host cpu is big endian and
