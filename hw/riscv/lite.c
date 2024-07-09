@@ -81,16 +81,18 @@ static void init(MachineState *m) {
                                    map[LITE_PLIC].size);
     }
 
+    map[LITE_RAM].size = m->ram_size;
+
     // boot rom
     MemoryRegion *rom = g_new0(MemoryRegion, 1);
+    MemoryRegion *ram = g_new0(MemoryRegion, 1);
 
     // TODO: rom/ram must be instantiated in the same order as they are placed in the as...
     memory_region_init_rom(rom, NULL, "lite.rom", map[LITE_ROM].size, &error_fatal);
+    memory_region_init_ram(ram, NULL, "lite.ram", map[LITE_RAM].size, &error_fatal);
 
     memory_region_add_subregion(get_system_memory(), map[LITE_ROM].base, rom);
-
-    // backside devices
-    map[LITE_RAM].size = m->ram_size;
+    memory_region_add_subregion(get_system_memory(), map[LITE_RAM].base, ram);
 
     // load
     hwaddr kernel = map[LITE_RAM].base;
