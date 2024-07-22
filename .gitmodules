@@ -46,4 +46,4 @@
 [submodule "libqflex"]
 	path = middleware
 	url = https://github.com/parsa-epfl/libqflex.git
-	branch = master
+	branch = next
