@@ -137,7 +137,8 @@ void cpu_disable_ticks(void)
 
 static bool icount_state_needed(void *opaque)
 {
-    return icount_enabled();
+    // return icount_enabled();
+    return false;
 }
 
 static bool warp_timer_state_needed(void *opaque)
