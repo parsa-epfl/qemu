@@ -45,6 +45,11 @@
 #include "internal-common.h"
 #include "internal-target.h"
 
+#ifdef CONFIG_LIBQFLEX
+#include "middleware/libqflex/libqflex-module.h"
+#include "middleware/libqflex/libqflex.h"
+#endif
+
 /* -icount align implementation. */
 
 typedef struct SyncClocks {
@@ -965,17 +970,43 @@ static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
     int ret;
+    int cur_expt = -1;
+    bool is_timing = false;
+
+    #ifdef CONFIG_LIBQFLEX
+        if (libqflex_is_timing_ready()) {
+            is_timing = true;
+        }
+    #endif
+
+    if (is_timing)
+        if ((cpu->exception_index >= 0) && (cpu->exception_index < EXCP_INTERRUPT))
+            cur_expt = cpu->exception_index;
 
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
         TranslationBlock *last_tb = NULL;
         int tb_exit = 0;
 
+        if (is_timing) {
+            if (cur_expt != -1)
+                return cur_expt;
+
+            CPUClass *cc = CPU_GET_CLASS(cpu);
+            int interrupt_request = cpu->interrupt_request;
+            if (cc->tcg_ops->cpu_check_interrupt(cpu, interrupt_request))
+                cur_expt = interrupt_request;
+        }
+
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
             TranslationBlock *tb;
             vaddr pc;
             uint64_t cs_base;
             uint32_t flags, cflags;
+
+            if (is_timing)
+                if (cur_expt != -1)
+                    return cur_expt;
 
             cpu_get_tb_cpu_state(cpu_env(cpu), &pc, &cs_base, &flags);
 
