@@ -365,7 +365,7 @@ void rr_start_vcpu_thread(CPUState *cpu)
 uint64_t
 libqflex_step(CPUState* cpu)
 {
-    int r = 0;
+    int r = 0xDEADBEEF;
 
     qemu_mutex_unlock_iothread();
     replay_mutex_lock();
