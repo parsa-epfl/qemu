@@ -134,7 +134,7 @@ static struct mig_cmd_args {
 /***********************************************************/
 /* savevm/loadvm support */
 
-static QEMUFile *qemu_fopen_bdrv(BlockDriverState *bs, int is_writable)
+QEMUFile *qemu_fopen_bdrv(BlockDriverState *bs, int is_writable)
 {
     if (is_writable) {
         return qemu_file_new_output(QIO_CHANNEL(qio_channel_block_new(bs)));
