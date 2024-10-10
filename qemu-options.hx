@@ -5871,14 +5871,14 @@ DEF("savevm-external", 0, QEMU_OPTION_savevm_external,
     "-savevm-external	Enable incremental non-blocking snapshot.\n",
     QEMU_ARCH_ALL)
 SRST
-`` -savevm-external	Enable the non-blocking external save``
+`` -savevm-external	Save state from an external memory block``
 ERST
 
-DEF("loadvm-external", 1, QEMU_OPTION_loadvm_external,
+DEF("loadvm-external", HAS_ARG, QEMU_OPTION_loadvm_external,
     "-loadvm-external	Load an external snapshot previously made with -savevm-external\n",
     QEMU_ARCH_ALL)
 SRST
-`` -loadvm-external	Enable the non-blocking external save``
+`` -loadvm-external	Load state from an external memory block``
 ERST
 
 #endif

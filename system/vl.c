@@ -655,10 +655,10 @@ static int drive_init_func(void *opaque, QemuOpts *opts, Error **errp)
 {
 
 #ifdef CONFIG_SNAPVM_EXT
-    if (qemu_snapvm_ext_state.is_load_enabled || qemu_snapvm_ext_state.is_save_enabled)
-    {
-        snapvm_init(opts, loadvm, errp);
-    }
+   // if (qemu_snapvm_ext_state.is_load_enabled || qemu_snapvm_ext_state.is_save_enabled)
+   // {
+   //     snapvm_init(opts, loadvm, errp);
+   // }
 #endif
 
     BlockInterfaceType *block_default_type = opaque;
@@ -2733,9 +2733,9 @@ void qmp_x_exit_preconfig(Error **errp)
     if (loadvm) {
 
 #ifdef CONFIG_SNAPVM_EXT
-	if (qemu_snapvm_ext_state.is_load_enabled)
-		load_snapshot_external(loadvm, NULL, false, NULL, &error_fatal);
-	else
+    if (qemu_snapvm_state.is_load_enabled)
+        load_snapshot_external(loadvm, NULL, false, NULL, &error_fatal);
+    else
 #endif
         load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
 
@@ -2803,6 +2803,10 @@ void qemu_init(int argc, char **argv)
 
 #ifdef CONFIG_LIBQFLEX
     qemu_add_opts(&qemu_libqflex_opts);
+#endif
+
+#ifdef CONFIG_SNAPVM_EXT
+    qemu_add_opts(&qemu_snapvm_loadvm_opts);
 #endif
 
     qemu_add_run_with_opts();
@@ -3666,21 +3670,19 @@ void qemu_init(int argc, char **argv)
 #endif /* CONFIG_POSIX */
 
 #ifdef CONFIG_LIBQFLEX
-
             case QEMU_OPTION_libqflex:
                 libqflex_parse_opts(optarg);
                 break;
-
 #endif /* CONFIG_LIBQFLEX */
+
 #ifdef CONFIG_SNAPVM_EXT
             case QEMU_OPTION_savevm_external:
-		        qemu_snapvm_ext_state.is_save_enabled = true;
+                qemu_snapvm_state.is_save_enabled = true;
                 break;
 
             case QEMU_OPTION_loadvm_external:
-		        loadvm = optarg;
-                qemu_snapvm_ext_state.is_load_enabled   = true;
-                qemu_snapvm_ext_state.has_been_loaded   = true;
+                snapvm_loadvm_parse_opts(optarg);
+                qemu_snapvm_state.is_load_enabled = true;
                 break;
 #endif
 
@@ -3823,5 +3825,9 @@ void qemu_init(int argc, char **argv)
      */
     libqflex_init();
 
+#endif
+
+#ifdef CONFIG_SNAPVM_EXT
+    snapvm_init();
 #endif
 }
