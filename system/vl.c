@@ -653,14 +653,6 @@ static int cleanup_add_fd(void *opaque, QemuOpts *opts, Error **errp)
 
 static int drive_init_func(void *opaque, QemuOpts *opts, Error **errp)
 {
-
-#ifdef CONFIG_SNAPVM_EXT
-   // if (qemu_snapvm_ext_state.is_load_enabled || qemu_snapvm_ext_state.is_save_enabled)
-   // {
-   //     snapvm_init(opts, loadvm, errp);
-   // }
-#endif
-
     BlockInterfaceType *block_default_type = opaque;
 
     return drive_new(opts, *block_default_type, errp) == NULL;
@@ -2805,9 +2797,9 @@ void qemu_init(int argc, char **argv)
     qemu_add_opts(&qemu_libqflex_opts);
 #endif
 
-#ifdef CONFIG_SNAPVM_EXT
-    qemu_add_opts(&qemu_snapvm_loadvm_opts);
-#endif
+//#ifdef CONFIG_SNAPVM_EXT
+//    qemu_add_opts(&qemu_snapvm_loadvm_opts);
+//#endif
 
     qemu_add_run_with_opts();
     module_call_init(MODULE_INIT_OPTS);
@@ -3676,12 +3668,13 @@ void qemu_init(int argc, char **argv)
 #endif /* CONFIG_LIBQFLEX */
 
 #ifdef CONFIG_SNAPVM_EXT
-            case QEMU_OPTION_savevm_external:
+            case QEMU_OPTION_snapvm_external:
+                snapvm_external_parse_opts(optarg);
                 qemu_snapvm_state.is_save_enabled = true;
                 break;
 
             case QEMU_OPTION_loadvm_external:
-                snapvm_loadvm_parse_opts(optarg);
+                loadvm = optarg;
                 qemu_snapvm_state.is_load_enabled = true;
                 break;
 #endif
