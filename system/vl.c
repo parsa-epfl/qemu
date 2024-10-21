@@ -2797,9 +2797,9 @@ void qemu_init(int argc, char **argv)
     qemu_add_opts(&qemu_libqflex_opts);
 #endif
 
-//#ifdef CONFIG_SNAPVM_EXT
-//    qemu_add_opts(&qemu_snapvm_loadvm_opts);
-//#endif
+#ifdef CONFIG_SNAPVM_EXT
+    qemu_add_opts(&qemu_snapvm_loadvm_opts);
+#endif
 
     qemu_add_run_with_opts();
     module_call_init(MODULE_INIT_OPTS);
