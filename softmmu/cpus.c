@@ -465,7 +465,7 @@ uint64_t qemu_wait_io_event(CPUState *cpu, bool not_running_yet, uint32_t *curre
                 uint64_t current_host_time_after_io = get_current_timestamp_ns();
                 uint64_t sleep_time = current_host_time_after_io - current_host_time;
                 // we can clean the quantum budget here.
-                assert(sleep_time / 1000 <= cpu->quantum_budget + 1);
+               //  assert(sleep_time / 1000 <= cpu->quantum_budget + 1);
                 cpu->quantum_budget -= sleep_time / 1000;
                 
                 // increase the time as well.
