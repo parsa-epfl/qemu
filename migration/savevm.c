@@ -3119,7 +3119,7 @@ bool save_snapshot_zstd(const char *name, bool overwrite, const char *vmstate,
     }
     aio_context = bdrv_get_aio_context(bs);
 
-    saved_vm_running = runstate_is_running();
+    saved_vm_running = runstate_is_running() || runstate_check(RUN_STATE_SAVE_VM);
 
     global_state_store();
     vm_stop(RUN_STATE_SAVE_VM);
