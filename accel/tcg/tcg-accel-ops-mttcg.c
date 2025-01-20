@@ -364,6 +364,9 @@ static void *mttcg_cpu_thread_fn(void *arg)
                     cpu->quantum_generation = new_generation;
                     cpu->touched_timer_during_last_quantum = 0;
 
+                    cpu_virtual_time[cpu->cpu_index].vts += quantum_size;
+
+
                     if (stop_request) {
                         break;
                     }

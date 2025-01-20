@@ -191,6 +191,16 @@ bool qemu_clock_use_for_deadline(QEMUClockType type);
 int64_t qemu_clock_deadline_ns_all(QEMUClockType type, int attr_mask);
 
 /**
+ * qemu_clock_deadline_ns_virtual_clock_for_quantum:
+ * @current_vtime: the current virtual time
+
+ * Calculate the deadline for the virtual clock when the quantum is enabled.
+
+ * Returns: the deadline for the virtual clock in nanoseconds
+ */
+int64_t qemu_clock_deadline_ns_virtual_clock_for_quantum(int64_t current_vtime);
+
+/**
  * qemu_clock_get_main_loop_timerlist:
  * @type: the clock type
  *

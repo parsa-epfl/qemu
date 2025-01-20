@@ -128,6 +128,7 @@ int dynamic_barrier_polling_init(dynamic_barrier_polling_t *barrier, int initial
     barrier->threshold = initial_threshold;
     barrier->count = 0;
     barrier->generation = 0;
+    barrier->next_virtual_time_deadline_in_ns = 0;
 
     if (quantum_enabled()) {
         // pthread_t tid;
@@ -197,38 +198,22 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
 
         barrier->count = 0;
 
-        // The last core will synchronize the time to all cores.
-        // Find the maximum vtime.
-        uint64_t max_vtime = 0;
-        for (int i = 0; i < barrier->threshold; i++) {
-            uint64_t vtime = cpu_virtual_time[i].vts;
-            if (vtime > max_vtime) {
-                max_vtime = vtime;
-            }
-        }
-
-        // Synchronize the time.
-        for (int i = 0; i < barrier->threshold; i++) {
-            // assert(cpu_virtual_time[i].vts <= max_vtime);
-            if (cpu_virtual_time[i].vts > max_vtime) {
-                printf("Thread %d, vts: %lu, max_vtime: %lu\n", i, cpu_virtual_time[i].vts, max_vtime);
-                assert(false);
-            }
-
-            cpu_virtual_time[i].vts = max_vtime;
-        }
-
         // Advance the virtual clock by the quantum size. 
-        qemu_mutex_lock_iothread();
 
-        increase_quantum_time();
+        int64_t current_virtual_time = increase_quantum_time();
+        barrier->next_virtual_time_deadline_in_ns -= quantum_size;
         
-        if (barrier->timer_update_request) {
-            // I need to update the clock and update the timer. 
+        if (barrier->timer_update_request || barrier->next_virtual_time_deadline_in_ns <= 0) {
+            qemu_mutex_lock_iothread();
             qemu_clock_run_timers(QEMU_CLOCK_VIRTUAL);
+            qemu_mutex_unlock_iothread();
+
+            int64_t deadline = qemu_clock_deadline_ns_virtual_clock_for_quantum(current_virtual_time);
+            assert(deadline >= 0);
+
+            barrier->next_virtual_time_deadline_in_ns = deadline;
         }
 
-        qemu_mutex_unlock_iothread();
 
         barrier->timer_update_request = false;
 

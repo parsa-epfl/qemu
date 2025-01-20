@@ -121,6 +121,12 @@ void cpu_enable_ticks(void)
     if (!timers_state.cpu_ticks_enabled) {
         // save the snapshot vm_clock before it is cleaned.
         timers_state.virtual_clock_snapshot = timers_state.cpu_clock_offset;
+
+        if (quantum_enabled()) {
+            for (int i = 0; i < 256; ++i) {
+                cpu_virtual_time[i].vts = timers_state.virtual_clock_snapshot;
+            }
+        }
         
         if (cyan_snapshot_cpu_clock_udpate_cb) {
             cyan_snapshot_cpu_clock_udpate_cb();
@@ -173,7 +179,7 @@ void cpu_disable_ticks(void)
                          &timers_state.vm_clock_lock);
 }
 
-void increase_quantum_time(void) {
+int64_t increase_quantum_time(void) {
     assert(quantum_enabled());
     
     seqlock_write_lock(&timers_state.vm_clock_seqlock,
@@ -185,6 +191,9 @@ void increase_quantum_time(void) {
 
     seqlock_write_unlock(&timers_state.vm_clock_seqlock,
                          &timers_state.vm_clock_lock);
+    
+    // return the current time.
+    return timers_state.virtual_clock_snapshot + timers_state.quantum_set_time;
 }
 
 static bool icount_state_needed(void *opaque)

@@ -75,7 +75,7 @@ void cpu_enable_ticks(void);
 void cpu_disable_ticks(void);
 
 // Called by the quantum barrier last thread.
-void increase_quantum_time(void);
+int64_t increase_quantum_time(void);
 
 /*
  * return the time elapsed in VM between vm_start and vm_stop.
