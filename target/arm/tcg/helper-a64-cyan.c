@@ -14,5 +14,6 @@ void HELPER(cyan_branch_resolved)(CPUARMState *env, uint64_t pc, uint64_t target
     if (cyan_br_cb) {
         // branch_resolved: void (*branch_resolved)(unsigned int vcpu_index, uint64_t pc, uint64_t target, uint32_t hint_flags);
         cyan_br_cb(current_cpu->cpu_index, pc, target, hint_flags);
+        assert((target - pc) % 4 == 0);
     }
 }
