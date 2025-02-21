@@ -17,6 +17,14 @@
 
 #include "qapi/qapi-builtin-types.h"
 
+typedef enum SnapshotFormat {
+    SNAPSHOT_FORMAT_INTERNAL_RAW,
+    SNAPSHOT_FORMAT_EXTERNAL_RAW,
+    SNAPSHOT_FORMAT_EXTERNAL_ZSTD,
+    SNAPSHOT_FORMAT_EXTERNAL_XDELTA
+} SnapshotFormat;
+
+
 /**
  * save_snapshot: Save an internal snapshot.
  * @name: name of internal snapshot
@@ -24,6 +32,7 @@
  * @vmstate: blockdev node name to store VM state in
  * @has_devices: whether to use explicit device list
  * @devices: explicit device list to snapshot
+ * @format: snapshot format
  * @errp: pointer to error object
  * On success, return %true.
  * On failure, store an error through @errp and return %false.
@@ -31,22 +40,7 @@
 bool save_snapshot(const char *name, bool overwrite,
                    const char *vmstate,
                    bool has_devices, strList *devices,
-                   Error **errp);
-
-/**
- * save_snapshot_zstd: Save an internal snapshot with Zstd compression of the memory + software state.
- * @name: name of internal snapshot
- * @overwrite: replace existing snapshot with @name
- * @vmstate: blockdev node name to store VM state in
- * @has_devices: whether to use explicit device list
- * @devices: explicit device list to snapshot
- * @errp: pointer to error object
- * On success, return %true.
- * On failure, store an error through @errp and return %false.
- */
-bool save_snapshot_zstd(const char *name, bool overwrite,
-                   const char *vmstate,
-                   bool has_devices, strList *devices,
+                   SnapshotFormat format,
                    Error **errp);
 
 /**

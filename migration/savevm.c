@@ -72,6 +72,7 @@
 #include "options.h"
 
 #include "qemu/plugin-cyan.h"
+#include <fcntl.h>
 
 const unsigned int postcopy_ram_discard_version;
 
@@ -2929,143 +2930,17 @@ static char *get_zstd(Error **errp)
     return zstd;
 }
 
-bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, Error **errp)
+static char *get_xdelta3(Error **errp)
 {
-    BlockDriverState *bs;
-    QEMUSnapshotInfo sn1, *sn = &sn1;
-    int ret = -1, ret2;
-    QEMUFile *f;
-    int saved_vm_running;
-    uint64_t vm_state_size;
-    g_autoptr(GDateTime) now = g_date_time_new_now_local();
-    AioContext *aio_context;
+    char *xdelta3 = g_find_program_in_path("xdelta3");
+    if (!xdelta3)
+        error_setg(errp, "xdelta3 not found in PATH");
 
-    GLOBAL_STATE_CODE();
-
-    if (migration_is_blocked(errp)) {
-        return false;
-    }
-
-    if (!replay_can_snapshot()) {
-        error_setg(errp, "Record/replay does not allow making snapshot "
-                   "right now. Try once more later.");
-        return false;
-    }
-
-    if (!bdrv_all_can_snapshot(has_devices, devices, errp)) {
-        return false;
-    }
-
-    /* Delete old snapshots of the same name */
-    if (name) {
-        if (overwrite) {
-            if (bdrv_all_delete_snapshot(name, has_devices,
-                                         devices, errp) < 0) {
-                return false;
-            }
-        } else {
-            ret2 = bdrv_all_has_snapshot(name, has_devices, devices, errp);
-            if (ret2 < 0) {
-                return false;
-            }
-            if (ret2 == 1) {
-                error_setg(errp,
-                           "Snapshot '%s' already exists in one or more devices",
-                           name);
-                return false;
-            }
-        }
-    }
-
-    bs = bdrv_all_find_vmstate_bs(vmstate, has_devices, devices, errp);
-    if (bs == NULL) {
-        return false;
-    }
-    aio_context = bdrv_get_aio_context(bs);
-
-    saved_vm_running = runstate_is_running();
-
-    global_state_store();
-    vm_stop(RUN_STATE_SAVE_VM);
-
-    bdrv_drain_all_begin();
-
-    aio_context_acquire(aio_context);
-
-    memset(sn, 0, sizeof(*sn));
-
-    /* fill auxiliary fields */
-    sn->date_sec = g_date_time_to_unix(now);
-    sn->date_nsec = g_date_time_get_microsecond(now) * 1000;
-    sn->vm_clock_nsec = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    if (replay_mode != REPLAY_MODE_NONE) {
-        sn->icount = replay_get_current_icount();
-    } else {
-        sn->icount = -1ULL;
-    }
-
-    if (name) {
-        pstrcpy(sn->name, sizeof(sn->name), name);
-    } else {
-        g_autofree char *autoname = g_date_time_format(now,  "vm-%Y%m%d%H%M%S");
-        pstrcpy(sn->name, sizeof(sn->name), autoname);
-    }
-
-    /* save the VM state */
-    f = qemu_fopen_bdrv(bs, 1);
-    if (!f) {
-        error_setg(errp, "Could not open VM state file");
-        goto the_end;
-    }
-    ret = qemu_savevm_state(f, errp);
-    vm_state_size = qemu_file_transferred_noflush(f);
-    ret2 = qemu_fclose(f);
-    if (ret < 0) {
-        goto the_end;
-    }
-    if (ret2 < 0) {
-        ret = ret2;
-        goto the_end;
-    }
-
-    // TODO: Add a plugin callback here to dump snapshot as well.
-    if (cyan_savevm_cb) {
-        cyan_savevm_cb(sn->name);
-    }
-
-    /* The bdrv_all_create_snapshot() call that follows acquires the AioContext
-     * for itself.  BDRV_POLL_WHILE() does not support nested locking because
-     * it only releases the lock once.  Therefore synchronous I/O will deadlock
-     * unless we release the AioContext before bdrv_all_create_snapshot().
-     */
-    aio_context_release(aio_context);
-    aio_context = NULL;
-
-    ret = bdrv_all_create_snapshot(sn, bs, vm_state_size,
-                                   has_devices, devices, errp);
-    if (ret < 0) {
-        bdrv_all_delete_snapshot(sn->name, has_devices, devices, NULL);
-        goto the_end;
-    }
-
-    ret = 0;
-
- the_end:
-    if (aio_context) {
-        aio_context_release(aio_context);
-    }
-
-    bdrv_drain_all_end();
-
-    if (saved_vm_running) {
-        vm_start();
-    }
-    return ret == 0;
+    return xdelta3;
 }
 
-bool save_snapshot_zstd(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, Error **errp)
+bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
+                  bool has_devices, strList *devices, SnapshotFormat format, Error **errp)
 {
     BlockDriverState *bs;
     QEMUSnapshotInfo sn1, *sn = &sn1;
@@ -3119,7 +2994,7 @@ bool save_snapshot_zstd(const char *name, bool overwrite, const char *vmstate,
     }
     aio_context = bdrv_get_aio_context(bs);
 
-    saved_vm_running = runstate_is_running() || runstate_check(RUN_STATE_SAVE_VM);
+    saved_vm_running = runstate_is_running() || runstate_check(RUN_STATE_SAVE_VM);;
 
     global_state_store();
     vm_stop(RUN_STATE_SAVE_VM);
@@ -3147,32 +3022,101 @@ bool save_snapshot_zstd(const char *name, bool overwrite, const char *vmstate,
         pstrcpy(sn->name, sizeof(sn->name), autoname);
     }
 
-    /* save the VM state */
-    char *zstd = get_zstd(errp);
-    if (!zstd)
-        goto the_end;
+    switch (format) {
+        case SNAPSHOT_FORMAT_INTERNAL_RAW: {
+            f = qemu_fopen_bdrv(bs, 1);
+            break;
+        }
 
-    char snapshot_file_name[293];
-    snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.zstd", sn->name);
+        case SNAPSHOT_FORMAT_EXTERNAL_RAW: {
+            char snapshot_file_name[293];
+            snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s", sn->name);
+            QIOChannelFile *ioc = qio_channel_file_new_path(snapshot_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666, errp);
+            if (!ioc) {
+                error_setg(errp, "Could not create snapshot file");
+                goto the_end;
+            }
+            
+            qio_channel_set_name(QIO_CHANNEL(ioc), "save_snapshot");
+            f = qemu_file_new_output(QIO_CHANNEL(ioc));
+            break;
+        }
 
-    const char *args[] = {zstd, "-f", "-q", "-T0", "-o", snapshot_file_name, NULL};
+        case SNAPSHOT_FORMAT_EXTERNAL_ZSTD: {
+            char *zstd = get_zstd(errp);
+            if (!zstd)
+                goto the_end;
 
-    QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_WRONLY, errp);
-    if (!ioc) {
-        error_setg(errp, "Could not create pipe for zstd");
-        goto the_end;
+            char snapshot_file_name[293];
+            snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.zstd", sn->name);
+            const char *args[] = {zstd, "-f", "-q", "-T0", "-o", snapshot_file_name, NULL};
+
+            QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_WRONLY, errp);
+
+            g_free(zstd);
+
+            if (!ioc) {
+                error_setg(errp, "Could not create pipe for zstd");
+                goto the_end;
+            }
+
+            qio_channel_set_name(QIO_CHANNEL(ioc), "save_snapshot");
+            f = qemu_file_new_output(QIO_CHANNEL(ioc));
+            break;
+        }
+
+        case SNAPSHOT_FORMAT_EXTERNAL_XDELTA: {
+            char *xdelta3 = get_xdelta3(errp);
+            if (!xdelta3)
+                goto the_end;
+
+            char snapshot_file_name[295];
+            snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.xdelta", sn->name);
+            const char *args[] = {xdelta3, "-e", "-q", "-s", "base", "/proc/self/fd/0", snapshot_file_name, NULL};
+
+            // Before actual run the program, we need to see if base exists. If base does not exist, we may need to decompress the snapshot file.
+            if (access("base", F_OK) == -1) {
+                // the base one does not exist. Maybe the zstd file exists.
+                if (access("base.zstd", F_OK) == -1) {
+                    error_setg(errp, "Could not find base snapshot file");
+                    goto the_end;
+                } else {
+                    // We can decompress the zstd file.
+                    if (system("zstd -d base.zstd")) {
+                        error_setg(errp, "Could not decompress base snapshot file");
+                        goto the_end;
+                    }
+                }
+            }
+
+            assert(access("base", F_OK) != -1);
+            
+            QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDWR, errp);
+
+            g_free(xdelta3);
+
+            if (!ioc) {
+                error_setg(errp, "Could not create pipe for xdelta3");
+                goto the_end;
+            }
+
+            qio_channel_set_name(QIO_CHANNEL(ioc), "save_snapshot");
+            f = qemu_file_new_output(QIO_CHANNEL(ioc));
+            break;
+        }
+
+        default: {
+            error_setg(errp, "Unknown snapshot format");
+            goto the_end;
+        }
+
     }
 
-    qio_channel_set_name(QIO_CHANNEL(ioc), "save_snapshot");
-
-    f = qemu_file_new_output(QIO_CHANNEL(ioc));
+    /* save the VM state */
     if (!f) {
         error_setg(errp, "Could not open VM state file");
         goto the_end;
     }
-
-    g_free(zstd);
-
     ret = qemu_savevm_state(f, errp);
     vm_state_size = qemu_file_transferred_noflush(f);
     ret2 = qemu_fclose(f);
@@ -3183,11 +3127,11 @@ bool save_snapshot_zstd(const char *name, bool overwrite, const char *vmstate,
         ret = ret2;
         goto the_end;
     }
+
     // TODO: Add a plugin callback here to dump snapshot as well.
     if (cyan_savevm_cb) {
         cyan_savevm_cb(sn->name);
     }
-
 
     /* The bdrv_all_create_snapshot() call that follows acquires the AioContext
      * for itself.  BDRV_POLL_WHILE() does not support nested locking because
@@ -3336,12 +3280,20 @@ bool load_snapshot(const char *name, const char *vmstate,
     ret = bdrv_snapshot_find(bs_vm_state, &sn, name);
     aio_context_release(aio_context);
 
-    char snapshot_name[293];
-    snprintf(snapshot_name, sizeof(snapshot_name), "%s.zstd", sn.name);
+    char zstd_snapshot_name[293];
+    char xdelta_snapshot_name[295];
+    char raw_snapshot_name[293];
+    snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
+    snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
+    snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
 
     if (ret < 0) {
         return false;
-    } else if (sn.vm_state_size == 0 && !g_file_test(snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    } else if (sn.vm_state_size == 0 && 
+                !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
+                !(g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) &&
+                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)
+            ) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
                    " offline using qemu-img");
         return false;
@@ -3361,16 +3313,39 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
-
     /* restore the VM state */
-    if (g_file_test(snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    
+    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) {
+        char *xdelta3 = get_xdelta3(errp);
+        if (!xdelta3)
+            return false;
+
+        const char *args[] = {xdelta3, "-d", "-q", "-s", "base", xdelta_snapshot_name, "-c", NULL};
+
+        QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
+        g_free(xdelta3);
+        if (!ioc) {
+            error_setg(errp, "Could not create pipe for xdelta3");
+            return false;
+        }
+
+        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
+
+        f = qemu_file_new_input(QIO_CHANNEL(ioc));
+        if (!f) {
+            error_setg(errp, "Could not open VM state file");
+            return false;
+        }
+
+    } else if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         char *zstd = get_zstd(errp);
         if (!zstd)
             return false;
 
-        const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", snapshot_name, NULL};
+        const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", zstd_snapshot_name, NULL};
 
         QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
+        g_free(zstd);
         if (!ioc) {
             error_setg(errp, "Could not create pipe for zstd");
             return false;
@@ -3384,8 +3359,16 @@ bool load_snapshot(const char *name, const char *vmstate,
             return false;
         }
 
-        g_free(zstd);
+    } else if (g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+        QIOChannelFile *ioc = qio_channel_file_new_path(raw_snapshot_name, O_RDONLY | O_BINARY, 0, errp);
+        if (!ioc) {
+            error_setg(errp, "Could not open snapshot file");
+            return false;
+        }
 
+        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
+
+        f = qemu_file_new_input(QIO_CHANNEL(ioc));
     } else {
         f = qemu_fopen_bdrv(bs_vm_state, 0);
         if (!f) {
@@ -3514,8 +3497,8 @@ static void snapshot_save_job_bh(void *opaque)
     SnapshotJob *s = container_of(job, SnapshotJob, common);
 
     job_progress_set_remaining(&s->common, 1);
-    s->ret = save_snapshot_zstd(s->tag, false, s->vmstate,
-                           true, s->devices, s->errp);
+    s->ret = save_snapshot(s->tag, false, s->vmstate,
+                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, s->errp);
     job_progress_update(&s->common, 1);
 
     qmp_snapshot_job_free(s);

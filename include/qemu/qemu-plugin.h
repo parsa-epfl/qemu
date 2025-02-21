@@ -912,7 +912,7 @@ CYAN_API uint64_t qemu_plugin_get_quantum_size(void);
  * This function is a wrapper of the QEMU function `save_snapshot`.
  * It prints the error directly to the console.
  */
-CYAN_API void qemu_plugin_savevm(const char *name);
+CYAN_API void qemu_plugin_savevm(const char *name, bool use_xdelta);
 
 CYAN_API typedef void (*qemu_plugin_event_loop_poll_cb_t)(void);
 

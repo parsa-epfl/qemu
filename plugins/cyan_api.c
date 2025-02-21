@@ -228,9 +228,9 @@ uint64_t qemu_plugin_get_quantum_size(void) {
   return 0;
 }
 
-void qemu_plugin_savevm(const char *name) {
+void qemu_plugin_savevm(const char *name, bool use_xdelta) {
   Error *err = NULL;
-  save_snapshot_zstd(name, true, NULL, false, NULL, &err);
+  save_snapshot(name, true, NULL, false, NULL, use_xdelta ? SNAPSHOT_FORMAT_EXTERNAL_XDELTA : SNAPSHOT_FORMAT_EXTERNAL_ZSTD, &err);
 
   if (err) {
     error_reportf_err(err, "Error: ");
