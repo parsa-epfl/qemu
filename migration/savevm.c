@@ -3139,6 +3139,15 @@ static char *get_zstd(Error **errp)
     return zstd;
 }
 
+static char *get_xdelta3(Error **errp)
+{
+    char *xdelta3 = g_find_program_in_path("xdelta3");
+    if (!xdelta3)
+        error_setg(errp, "xdelta3 not found in PATH");
+
+    return xdelta3;
+}
+
 bool load_snapshot(const char *name, const char *vmstate,
                    bool has_devices, strList *devices, Error **errp)
 {
@@ -3173,12 +3182,20 @@ bool load_snapshot(const char *name, const char *vmstate,
     ret = bdrv_snapshot_find(bs_vm_state, &sn, name);
     aio_context_release(aio_context);
 
-    char snapshot_name[293];
-    g_snprintf(snapshot_name, sizeof(snapshot_name), "%s.zstd", sn.name);
+    char zstd_snapshot_name[293];
+    char xdelta_snapshot_name[295];
+    char raw_snapshot_name[293];
+    snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
+    snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
+    snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
 
     if (ret < 0) {
         return false;
-    } else if (sn.vm_state_size == 0 && !g_file_test(snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    } else if (sn.vm_state_size == 0 && 
+                !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
+                !(g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) &&
+                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)
+            ) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
                    " offline using qemu-img");
         return false;
@@ -3199,14 +3216,38 @@ bool load_snapshot(const char *name, const char *vmstate,
     }
 
     /* restore the VM state */
-    if (g_file_test(snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    
+    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) {
+        char *xdelta3 = get_xdelta3(errp);
+        if (!xdelta3)
+            return false;
+
+        const char *args[] = {xdelta3, "-d", "-q", "-c", "-s", "base", xdelta_snapshot_name, NULL};
+
+        QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
+        g_free(xdelta3);
+        if (!ioc) {
+            error_setg(errp, "Could not create pipe for xdelta3");
+            return false;
+        }
+
+        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
+
+        f = qemu_file_new_input(QIO_CHANNEL(ioc));
+        if (!f) {
+            error_setg(errp, "Could not open VM state file");
+            return false;
+        }
+
+    } else if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         char *zstd = get_zstd(errp);
         if (!zstd)
             return false;
 
-        const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", snapshot_name, NULL};
+        const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", zstd_snapshot_name, NULL};
 
         QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
+        g_free(zstd);
         if (!ioc) {
             error_setg(errp, "Could not create pipe for zstd");
             return false;
@@ -3220,8 +3261,17 @@ bool load_snapshot(const char *name, const char *vmstate,
             return false;
         }
 
-        g_free(zstd);
+    } else if (false && g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+        // It is not expected to load raw format snapsho in this QEMU. A better replacement is always zstd or xdelta3 if there is no requirement to create a snapshot.
+        QIOChannelFile *ioc = qio_channel_file_new_path(raw_snapshot_name, O_RDONLY | O_BINARY, 0, errp);
+        if (!ioc) {
+            error_setg(errp, "Could not open snapshot file");
+            return false;
+        }
 
+        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
+
+        f = qemu_file_new_input(QIO_CHANNEL(ioc));
     } else {
         f = qemu_fopen_bdrv(bs_vm_state, 0);
         if (!f) {
