@@ -519,9 +519,14 @@ bool bdrv_all_can_snapshot(bool has_devices, strList *devices,
 
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return false;
     }
+
+    bdrv_graph_rdunlock_main_loop();
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
@@ -555,9 +560,15 @@ int bdrv_all_delete_snapshot(const char *name,
 
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return -1;
     }
+
+    bdrv_graph_rdunlock_main_loop();
+
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
@@ -596,9 +607,14 @@ int bdrv_all_goto_snapshot(const char *name,
 
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return -1;
     }
+
+    bdrv_graph_rdunlock_main_loop();
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
@@ -632,9 +648,14 @@ int bdrv_all_has_snapshot(const char *name,
 
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return -1;
     }
+
+    bdrv_graph_rdunlock_main_loop();
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
@@ -675,9 +696,14 @@ int bdrv_all_create_snapshot(QEMUSnapshotInfo *sn,
     GList *iterbdrvs;
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return -1;
     }
+
+    bdrv_graph_rdunlock_main_loop();
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
@@ -716,9 +742,14 @@ BlockDriverState *bdrv_all_find_vmstate_bs(const char *vmstate_bs,
 
     GLOBAL_STATE_CODE();
 
+    bdrv_graph_rdlock_main_loop();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+        bdrv_graph_rdunlock_main_loop();
         return NULL;
     }
+
+    bdrv_graph_rdunlock_main_loop();
 
     iterbdrvs = bdrvs;
     while (iterbdrvs) {
