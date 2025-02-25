@@ -3222,7 +3222,7 @@ bool load_snapshot(const char *name, const char *vmstate,
         if (!xdelta3)
             return false;
 
-        const char *args[] = {xdelta3, "-d", "-q", "-c", "-s", "base", xdelta_snapshot_name, NULL};
+        const char *args[] = {xdelta3, "-d", "-q", "-c", xdelta_snapshot_name, NULL};
 
         QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
         g_free(xdelta3);
