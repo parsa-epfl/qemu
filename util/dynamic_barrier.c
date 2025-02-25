@@ -183,19 +183,6 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
         barrier->current_cycle += quantum_size;
         barrier->stop_request = 0;
 
-        if (barrier->next_check_threshold != 0 && barrier->current_cycle >= barrier->next_check_threshold) {
-            if (cyan_periodic_check_cb != NULL) {
-                if(cyan_periodic_check_cb(quantum_check_threshold)) {
-                    barrier->stop_request = true;
-                    // wait for the machine state to become suspended for VM.
-                    while (runstate_get() != RUN_STATE_SAVE_VM) {
-
-                    }
-                }
-            } 
-            barrier->next_check_threshold += quantum_check_threshold;
-        }
-
         barrier->count = 0;
 
         // Advance the virtual clock by the quantum size. 
@@ -216,6 +203,23 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
 
 
         barrier->timer_update_request = false;
+
+        // Then, run the periodic check.
+        if (barrier->next_check_threshold != 0 && barrier->current_cycle >= barrier->next_check_threshold) {
+            if (cyan_periodic_check_cb != NULL) {
+                if(cyan_periodic_check_cb(quantum_check_threshold)) {
+                    barrier->stop_request = true;
+                    // Notify the main loop for the incoming snapshot event.
+                    qemu_notify_event();
+
+                    // wait for the machine state to become suspended for VM.
+                    while (runstate_get() != RUN_STATE_SAVE_VM) {
+                        sched_yield();
+                    }
+                }
+            } 
+            barrier->next_check_threshold += quantum_check_threshold;
+        }
 
         // increase the generation and notify others.
         atomic_fetch_add(&barrier->generation, 1);
