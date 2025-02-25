@@ -1042,6 +1042,13 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);
+
+#ifdef CONFIG_LIBQFLEX
+            CPUClass *cc = CPU_GET_CLASS(cpu);
+            if (cc->tcg_ops->cpu_check_interrupt && cc->tcg_ops->cpu_check_interrupt(cpu, cpu->interrupt_request)) {
+                return EXCP_INTERRUPT;
+            }
+#endif
         }
     }
     return ret;
