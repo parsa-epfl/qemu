@@ -88,8 +88,12 @@ static void icount_update_locked(CPUState *cpu)
     int64_t executed = icount_get_executed(cpu);
     cpu->icount_budget -= executed;
 
+#ifndef CONFIG_LIBQFLEX
+    // No need to increase the QEMU_icount here.
+
     qatomic_set_i64(&timers_state.qemu_icount,
                     timers_state.qemu_icount + executed);
+#endif
 }
 
 /*
