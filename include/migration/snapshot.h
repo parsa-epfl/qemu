@@ -41,6 +41,7 @@ bool save_snapshot(const char *name, bool overwrite,
                    const char *vmstate,
                    bool has_devices, strList *devices,
                    SnapshotFormat format,
+                   const char *xdelta_source_name,
                    Error **errp);
 
 /**

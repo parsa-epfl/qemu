@@ -2940,7 +2940,7 @@ static char *get_xdelta3(Error **errp)
 }
 
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, SnapshotFormat format, Error **errp)
+                  bool has_devices, strList *devices, SnapshotFormat format, const char *xdelta_source_name, Error **errp)
 {
     BlockDriverState *bs;
     QEMUSnapshotInfo sn1, *sn = &sn1;
@@ -3066,30 +3066,41 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         }
 
         case SNAPSHOT_FORMAT_EXTERNAL_XDELTA: {
+            if (!xdelta_source_name) {
+                error_setg(errp, "No xdelta source name provided");
+                goto the_end;
+            }
+            
             char *xdelta3 = get_xdelta3(errp);
             if (!xdelta3)
                 goto the_end;
 
             char snapshot_file_name[295];
             snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.xdelta", sn->name);
-            const char *args[] = {xdelta3, "-e", "-q", "-s", "base", "/proc/self/fd/0", snapshot_file_name, NULL};
+            const char *args[] = {
+                xdelta3, 
+                "-1", 
+                "-W", 
+                "67108864",
+                "-N",
+                "-B",
+                "67108864",
+                "-f", 
+                "-e", 
+                "-q", 
+                "-s", xdelta_source_name, 
+                "/proc/self/fd/0", 
+                snapshot_file_name, 
+                NULL
+            };
 
-            // Before actual run the program, we need to see if base exists. If base does not exist, we may need to decompress the snapshot file.
-            if (access("base", F_OK) == -1) {
-                // the base one does not exist. Maybe the zstd file exists.
-                if (access("base.zstd", F_OK) == -1) {
-                    error_setg(errp, "Could not find base snapshot file");
-                    goto the_end;
-                } else {
-                    // We can decompress the zstd file.
-                    if (system("zstd -d base.zstd")) {
-                        error_setg(errp, "Could not decompress base snapshot file");
-                        goto the_end;
-                    }
-                }
+            // Before actual run the program, we need to see if the source exists.
+            if (access(xdelta_source_name, F_OK) == -1) {
+                error_setg(errp, "Could not find the source snapshot file for xdelta: %s", xdelta_source_name);
+                goto the_end;
             }
 
-            assert(access("base", F_OK) != -1);
+            assert(access(xdelta_source_name, F_OK) != -1);
             
             QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDWR, errp);
 
@@ -3291,7 +3302,7 @@ bool load_snapshot(const char *name, const char *vmstate,
         return false;
     } else if (sn.vm_state_size == 0 && 
                 !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
-                !(g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) &&
+                !g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
                 !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)
             ) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
@@ -3315,12 +3326,12 @@ bool load_snapshot(const char *name, const char *vmstate,
 
     /* restore the VM state */
     
-    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) {
+    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         char *xdelta3 = get_xdelta3(errp);
         if (!xdelta3)
             return false;
 
-        const char *args[] = {xdelta3, "-d", "-q", "-c", "-s", "base", xdelta_snapshot_name, NULL};
+        const char *args[] = {xdelta3, "-d", "-q", "-c", xdelta_snapshot_name, NULL};
 
         QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
         g_free(xdelta3);
@@ -3498,7 +3509,7 @@ static void snapshot_save_job_bh(void *opaque)
 
     job_progress_set_remaining(&s->common, 1);
     s->ret = save_snapshot(s->tag, false, s->vmstate,
-                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, s->errp);
+                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, NULL, s->errp);
     job_progress_update(&s->common, 1);
 
     qmp_snapshot_job_free(s);

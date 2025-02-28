@@ -908,11 +908,13 @@ CYAN_API uint64_t qemu_plugin_get_quantum_size(void);
 /**
  * qemu_plugin_savevm - save the VM state.
  * @name: the name of the snapshot.
+ * @use_xdelta: whether to use xdelta to save the snapshot.
+ * @xdelta_source_name: the name of the source snapshot when using xdelta. Can be null for other cases.
  *
  * This function is a wrapper of the QEMU function `save_snapshot`.
  * It prints the error directly to the console.
  */
-CYAN_API void qemu_plugin_savevm(const char *name, bool use_xdelta);
+CYAN_API void qemu_plugin_savevm(const char *name, bool use_xdelta, const char *xdelta_source_name);
 
 CYAN_API typedef void (*qemu_plugin_event_loop_poll_cb_t)(void);
 
