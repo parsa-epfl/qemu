@@ -435,7 +435,7 @@ static uint64_t get_current_timestamp_ns(void) {
     return timestamp_ns;
 }
 
-uint64_t qemu_wait_io_event(CPUState *cpu, bool not_running_yet, uint32_t *current_quantum_generation)
+uint64_t qemu_wait_io_event(CPUState *cpu, uint32_t *current_quantum_generation)
 {
     bool slept = false;
     uint64_t idle_latency = 0;

@@ -31,7 +31,7 @@ static void *report_time_peridically(void *arg) {
     while (1) {
         sleep(10);
         uint64_t total_diff = barrier->total_diff;
-        uint64_t generation = barrier->generation;
+        uint64_t generation = barrier->return_value.two_32.generation;
         printf("Total time spent in the barrier: %lu ns, generation: %lu, normalized_diff: %lf\n", total_diff, generation, (double)total_diff / generation);
     }
     return NULL;
@@ -127,7 +127,8 @@ int dynamic_barrier_polling_init(dynamic_barrier_polling_t *barrier, int initial
 
     barrier->threshold = initial_threshold;
     barrier->count = 0;
-    barrier->generation = 0;
+    barrier->return_value.two_32.generation = 0;
+    barrier->return_value.two_32.stop_request = 0;
     barrier->next_virtual_time_deadline_in_ns = 0;
 
     if (quantum_enabled()) {
@@ -169,7 +170,7 @@ static void dynamic_barrier_polling_release_lock(dynamic_barrier_polling_t *barr
 uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32_t private_generation, bool *stop_request, bool check_time) {
     dynamic_barrier_polling_acquire_lock(barrier);
 
-    uint64_t current_gen = atomic_load(&barrier->generation);
+    uint32_t current_gen = atomic_load(&barrier->return_value.two_32.generation);
 
     assert(private_generation == current_gen);
 
@@ -181,7 +182,8 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
     
     if (waiting_count == barrier->threshold - 1) {
         barrier->current_cycle += quantum_size;
-        barrier->stop_request = 0;
+        // barrier->stop_request = 0;
+        bool broadcast_stop_request = 0;
 
         barrier->count = 0;
 
@@ -208,7 +210,7 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
         if (barrier->next_check_threshold != 0 && barrier->current_cycle >= barrier->next_check_threshold) {
             if (cyan_periodic_check_cb != NULL) {
                 if(cyan_periodic_check_cb(quantum_check_threshold)) {
-                    barrier->stop_request = true;
+                    broadcast_stop_request = 1;
                     // Notify the main loop for the incoming snapshot event.
                     qemu_notify_event();
 
@@ -221,21 +223,34 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
             barrier->next_check_threshold += quantum_check_threshold;
         }
 
+        barrier_result_t return_value;
+
+        return_value.stop_request = broadcast_stop_request;
+        return_value.generation = current_gen + 1;
+
         // increase the generation and notify others.
-        atomic_fetch_add(&barrier->generation, 1);
+        atomic_store(&barrier->return_value.one_64, *((uint64_t *)&return_value));
 
         dynamic_barrier_polling_release_lock(barrier); // we can release the generation here.
 
-        *stop_request = barrier->stop_request;
+        *stop_request = broadcast_stop_request;
     } else {
         barrier->count += 1;
-        bool require_stop = barrier->stop_request;
         dynamic_barrier_polling_release_lock(barrier);
 
+        barrier_result_t barrier_return_value;
+
         // You just need to wait.
-        while (atomic_load(&barrier->generation) == private_generation) {
-            // do nothing, because the current generation is not changed.
+        while (true) {
+            *((uint64_t *)&barrier_return_value) = atomic_load(&barrier->return_value.one_64);
+
+            if (barrier_return_value.generation != current_gen) {
+                break;
+            }
         }
+
+        // read the stop request set by the last thread.
+        bool require_stop = barrier_return_value.stop_request;
 
         *stop_request = require_stop;
     }
@@ -246,7 +261,7 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
 uint32_t dynamic_barrier_polling_increase_by_1(dynamic_barrier_polling_t *barrier) {
     uint32_t current_generation;
     dynamic_barrier_polling_acquire_lock(barrier);
-    current_generation = atomic_load(&barrier->generation);
+    current_generation = atomic_load(&barrier->return_value.two_32.generation);
     barrier->threshold += 1;
     dynamic_barrier_polling_release_lock(barrier);
 
@@ -275,7 +290,7 @@ int dynamic_barrier_polling_decrease_by_1(dynamic_barrier_polling_t *barrier) {
         barrier->count = 0;
 
         // increase the generation and notify others.
-        atomic_fetch_add(&barrier->generation, 1);
+        atomic_fetch_add(&barrier->return_value.two_32.generation, 1);
     }
 
     dynamic_barrier_polling_release_lock(barrier);
@@ -284,7 +299,7 @@ int dynamic_barrier_polling_decrease_by_1(dynamic_barrier_polling_t *barrier) {
 
 void dynamic_barrier_polling_reset(dynamic_barrier_polling_t *barrier) {
     dynamic_barrier_polling_acquire_lock(barrier);
-    atomic_store(&barrier->generation, 0); // this should make everyone to not wait. 
+    atomic_store(&barrier->return_value.two_32.generation, 0); // this should make everyone to not wait. 
     barrier->count = 0;
     dynamic_barrier_polling_release_lock(barrier);
 }

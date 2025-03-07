@@ -25,7 +25,7 @@ bool cpu_thread_is_idle(CPUState *cpu);
 bool all_cpu_threads_idle(void);
 bool cpu_can_run(CPUState *cpu);
 void qemu_wait_io_event_common(CPUState *cpu);
-uint64_t qemu_wait_io_event(CPUState *cpu, bool not_running_yet, uint32_t *current_quantum_generation); // return the idle latency of the target time.
+uint64_t qemu_wait_io_event(CPUState *cpu, uint32_t *current_quantum_generation); // return the idle latency of the target time.
 void cpu_thread_signal_created(CPUState *cpu);
 void cpu_thread_signal_destroyed(CPUState *cpu);
 void cpu_handle_guest_debug(CPUState *cpu);

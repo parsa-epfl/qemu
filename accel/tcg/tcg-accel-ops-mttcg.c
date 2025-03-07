@@ -204,6 +204,26 @@ static void *mttcg_cpu_thread_fn(void *arg)
     cpu->thread_id = qemu_get_thread_id();
     cpu->can_do_io = 1;
 
+    // initialize the field that are related to the time. 
+    cpu->unknown_time = 0;
+    cpu->enter_idle_time = 0;
+    cpu->target_cycle_on_idle = 0;
+    cpu->target_cycle_on_instruction = 0;
+    cpu->touched_timer_during_last_quantum = 0;
+
+    bool affiliated_with_quantum = cpu->ip10ps && quantum_enabled();
+
+    // register the current thread to the barrier.
+    if (affiliated_with_quantum) {
+        cpu->quantum_generation = dynamic_barrier_polling_increase_by_1(&quantum_barrier);
+        cpu->quantum_budget = (quantum_size * cpu->ip10ps) / 100;
+        assert(cpu->quantum_budget > 0); 
+        cpu->quantum_required = 0;
+        cpu->quantum_budget_depleted = 0;
+
+
+        qemu_log("Core%u Quantum Count: %lu cycles, %lu instructions \n", cpu->cpu_index, quantum_size, quantum_size * cpu->ip10ps);
+    }
 
     current_cpu = cpu;
     cpu_thread_signal_created(cpu);
@@ -219,39 +239,12 @@ static void *mttcg_cpu_thread_fn(void *arg)
     /* process any pending work */
     cpu->exit_request = 1;
 
-    bool not_running_yet = true;
-
-    bool affiliated_with_quantum = cpu->ip10ps && quantum_enabled();
 
     // uint64_t dumping_threshold = 300 * 1000 * 1000; // 300M
 
     // uint64_t ts0 = get_current_timestamp_ns();
     do {
         if (cpu_can_run(cpu)) {
-            if (not_running_yet) {
-                // initialize the field that are related to the time. 
-                cpu->unknown_time = 0;
-                cpu->enter_idle_time = 0;
-                cpu->target_cycle_on_idle = 0;
-                cpu->target_cycle_on_instruction = 0;
-                cpu->touched_timer_during_last_quantum = 0;
-
-                // register the current thread to the barrier.
-                if (affiliated_with_quantum) {
-                    cpu->quantum_generation = dynamic_barrier_polling_increase_by_1(&quantum_barrier);
-                    cpu->quantum_budget = (quantum_size * cpu->ip10ps) / 100;
-                    assert(cpu->quantum_budget > 0); 
-                    cpu->quantum_required = 0;
-                    cpu->quantum_budget_depleted = 0;
-
-
-                    qemu_log("Core%u Quantum Count: %lu cycles, %lu instructions \n", cpu->cpu_index, quantum_size, quantum_size * cpu->ip10ps);
-                }
-
-                // initialize the quantum budget.
-                not_running_yet = false;
-            }
-
             int r;
             qemu_mutex_unlock_iothread();
             r = tcg_cpus_exec(cpu);
@@ -340,7 +333,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
 
         qatomic_set_mb(&cpu->exit_request, 0);
         uint32_t current_quantum_generation = 0;
-        qemu_wait_io_event(cpu, not_running_yet, &current_quantum_generation); // This function will not decouple the thread from the barrier anymore.
+        qemu_wait_io_event(cpu, &current_quantum_generation); // This function will not decouple the thread from the barrier anymore.
 
         // it is possible that the quantum budget is depleted due to the idle state.
         if (affiliated_with_quantum && cpu->quantum_budget_depleted) {

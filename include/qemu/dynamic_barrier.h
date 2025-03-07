@@ -28,6 +28,12 @@ typedef struct {
 // int dynamic_barrier_decrease_by_1(dynamic_barrier_t *barrier);
 
 
+// The return result of the barrier.
+typedef struct {
+    uint32_t stop_request;
+    uint32_t generation;
+} barrier_result_t;
+
 typedef struct {
     struct {
         atomic_uint_fast64_t next_ticket;
@@ -38,9 +44,10 @@ typedef struct {
     uint64_t __padding2__[7];
     uint64_t count;
     uint64_t __padding3__[7];
-    uint64_t stop_request;
-    uint64_t __padding4__[7];
-    atomic_uint_fast32_t generation;
+    union {
+        barrier_result_t two_32;
+        atomic_uint_fast64_t one_64;
+    } return_value;
     uint64_t __padding5__[7];
 
     uint64_t timer_update_request;
