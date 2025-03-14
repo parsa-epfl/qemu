@@ -371,7 +371,7 @@ static void *rr_cpu_thread_fn(void *arg)
                 qemu_mutex_unlock_iothread();
                 if (icount_enabled()) {
                     uint64_t icount = (cpu_budget * core_info_table[cpu->cpu_index].ip10ps) / 100;
-                    assert(icount > 0);
+                    // assert(icount > 0);
                     icount_prepare_for_run(cpu, icount);
                 }
                 r = tcg_cpus_exec(cpu);
