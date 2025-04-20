@@ -458,7 +458,6 @@ uint64_t qemu_wait_io_event(CPUState *cpu, uint32_t *current_quantum_generation)
         if (runstate_is_running()) {
             bool affiliated_with_quantum = cpu->ip10ps != 0 && quantum_enabled();
             if (affiliated_with_quantum) {
-                cpu->quantum_budget = 0;
                 cpu->quantum_budget_depleted = 1;
                 break; // we need to break in order to wait for the barrier.
             } else {
@@ -468,17 +467,6 @@ uint64_t qemu_wait_io_event(CPUState *cpu, uint32_t *current_quantum_generation)
             // well, there is no need to timeout. This is stopped by the system.
             qemu_cond_wait(cpu->halt_cond, &qemu_global_mutex);
         }
-
-
-        // uint64_t current_cpu_clock_after_io = cpu_get_clock_locked();
-
-        // if (!not_running_yet && is_vcpu_affiliated_with_quantum(cpu->cpu_index)) {
-        //     // After sleep, you should let the quantum barrier know that I will be involved.
-        //     *current_quantum_generation = dynamic_barrier_polling_increase_by_1(&quantum_barrier);
-
-        //     idle_latency += current_cpu_clock_after_io - current_cpu_clock;
-
-        // }
 
         idle_latency = 1;
     }

@@ -4,6 +4,7 @@
 
 uint64_t quantum_size = 0;
 uint64_t quantum_check_threshold = 0;
+bool quantum_allow_interrupt_wakeup_inside = 0; // allow interrupts and other `run_on_cpu` to wake up a thread that spins on the quantum barrier.
 static uint64_t quantum_enabled_lower_bound = 0;
 static uint64_t quantum_enabled_upper_bound = 0;
 
@@ -31,6 +32,7 @@ void quantum_configure(QemuOpts *opts, Error **errp) {
         g_free(range_tmp);
     }
 
+    quantum_allow_interrupt_wakeup_inside = qemu_opt_get_bool(opts, "allow_interrupt_wakeup_inside", false);
 
     // make it as a global value.
     quantum_size = quantum_size_tmp;

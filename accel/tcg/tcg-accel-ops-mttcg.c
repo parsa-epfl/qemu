@@ -340,7 +340,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
             qemu_mutex_unlock_iothread();
             cpu->quantum_budget_depleted = false;
             if (affiliated_with_quantum) {
-                while (cpu->quantum_budget <= 0) {
+                do {
                     uint64_t old_generation = cpu->quantum_generation;
                     cpu_virtual_time[cpu->cpu_index].next_deadline_in_ns = -1;
                     bool stop_request = false;
@@ -351,8 +351,20 @@ static void *mttcg_cpu_thread_fn(void *arg)
                         &stop_request, 
                         cpu->touched_timer_during_last_quantum != 0
                     );
+
+                    if (new_generation == old_generation) {
+                        // The CPU thread is waken up in the middle of the quantum
+                        assert(quantum_allow_interrupt_wakeup_inside);
+                        break;
+                    }
                 
                     assert(new_generation == old_generation + 1);
+
+                    if (cpu->quantum_budget > 0) {
+                        // this means the last quantum is not completely depleted. We need to deplete it before moving forward.
+                        cpu->quantum_budget = 0;   
+                    }
+
                     cpu->quantum_budget += (quantum_size * cpu->ip10ps) / 100;
                     cpu->quantum_generation = new_generation;
                     cpu->touched_timer_during_last_quantum = 0;
@@ -363,7 +375,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
                     if (stop_request) {
                         break;
                     }
-                }
+                } while (cpu->quantum_budget <= 0);
             } else {
                 assert(false);
             }

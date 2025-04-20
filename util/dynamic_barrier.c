@@ -5,9 +5,11 @@
 #include <unistd.h>
 
 #include "qemu/osdep.h"
+#include "hw/core/cpu.h"
 #include "qemu/timer.h"
 #include "sysemu/cpu-timers.h"
 #include "qemu/main-loop.h"
+#include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
 #include "sysemu/quantum.h"
 #include "qemu/plugin-cyan.h"
@@ -247,6 +249,42 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
             if (barrier_return_value.generation != current_gen) {
                 break;
             }
+
+            if (quantum_allow_interrupt_wakeup_inside) {
+                // Now, we need to check whether the CPU has work to do
+                assert(current_cpu != NULL);
+                
+                // How many credits do I have?
+                if (current_cpu->quantum_budget <= 0) {
+                    // No need to continue.
+                    continue;
+                }
+
+                if (cpu_thread_is_idle(current_cpu)) {
+                    continue;
+                }
+
+                // Well, this means the CPU has work to do. 
+                // Grab the lock.
+                dynamic_barrier_polling_acquire_lock(barrier);
+
+                if (barrier->return_value.two_32.generation != current_gen) {
+                    // The generation has changed, which mean the last quantum has been finished. 
+                    // This thread also needs to move to the next quantum.
+                    dynamic_barrier_polling_release_lock(barrier);
+                    break;
+                }
+
+                // Now, we need to detach from the barrier.
+                assert(barrier->count > 0);
+                barrier->count -= 1;
+
+                // release the lock.
+                dynamic_barrier_polling_release_lock(barrier);
+
+                return current_gen; 
+            }
+
         }
 
         // read the stop request set by the last thread.

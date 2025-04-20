@@ -13,6 +13,7 @@ void quantum_configure(QemuOpts *opts, Error **errp);
 #ifdef CONFIG_TCG
 extern uint64_t quantum_size;
 extern uint64_t quantum_check_threshold;
+extern bool quantum_allow_interrupt_wakeup_inside;
 #define quantum_enabled() (quantum_size != 0)
 #else
 #define quantum_enabled() (0)
