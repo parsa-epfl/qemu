@@ -211,6 +211,10 @@ static void *mttcg_cpu_thread_fn(void *arg)
     cpu->target_cycle_on_instruction = 0;
     cpu->touched_timer_during_last_quantum = 0;
 
+    cpu->sgi_sender_time_ns_valid = 0;
+    cpu->sgi_sender_remaining_time_ns = 0;
+    cpu->sgi_sender_quantum_generation = 0;
+
     bool affiliated_with_quantum = cpu->ip10ps && quantum_enabled();
 
     // register the current thread to the barrier.

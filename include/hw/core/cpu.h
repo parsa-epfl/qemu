@@ -461,6 +461,13 @@ struct CPUState {
 
     // State to query the latest timer interrupt deadline.
     uint64_t (*cb_next_timer_interrupt_time)(CPUState *);
+
+    uint64_t padding[2];
+
+    // State for the time passing through the IPI.
+    uint64_t sgi_sender_time_ns_valid;
+    uint64_t sgi_sender_remaining_time_ns;
+    uint64_t sgi_sender_quantum_generation;
 };
 
 typedef QTAILQ_HEAD(CPUTailQ, CPUState) CPUTailQ;

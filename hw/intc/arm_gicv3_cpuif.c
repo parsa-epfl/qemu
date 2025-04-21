@@ -1855,6 +1855,23 @@ static void icc_generate_sgi(CPUARMState *env, GICv3CPUState *cs,
             }
         }
 
+        // deliver the time of the interrupt source to the target CPU.
+        CPUState *cpu = cs->cpu;
+        uint64_t quantum_generation = cpu->quantum_generation;
+        uint64_t remaining_ns = (cpu->quantum_budget * 100) / cpu->ip10ps;
+        
+        CPUState *target_cpu = ocs->cpu;
+        if (target_cpu->sgi_sender_time_ns_valid) {
+            // keep the smallest remaining time.
+            target_cpu->sgi_sender_remaining_time_ns = MIN(target_cpu->sgi_sender_remaining_time_ns, remaining_ns);
+            // this must be within the same quantum.
+            assert(target_cpu->sgi_sender_quantum_generation == quantum_generation);
+        } else {
+            target_cpu->sgi_sender_time_ns_valid = true;
+            target_cpu->sgi_sender_remaining_time_ns = remaining_ns;
+            target_cpu->sgi_sender_quantum_generation = quantum_generation;
+        }
+
         /* The redistributor will check against its own GICR_NSACR as needed */
         gicv3_redist_send_sgi(ocs, grp, irq, ns);
     }
