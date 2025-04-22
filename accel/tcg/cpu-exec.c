@@ -875,9 +875,6 @@ static inline bool cpu_handle_interrupt(CPUState *cpu,
                     replay_interrupt();
                 }
 
-                // Clear the SGI sender's time.
-                cpu->sgi_sender_time_ns_valid = false;
-
                 /*
                  * After processing the interrupt, ensure an EXCP_DEBUG is
                  * raised when single-stepping so that GDB doesn't miss the

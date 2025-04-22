@@ -170,6 +170,8 @@ static void dynamic_barrier_polling_release_lock(dynamic_barrier_polling_t *barr
 }
 
 uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32_t private_generation, bool *stop_request, bool check_time) {
+    assert(current_cpu != NULL);
+
     dynamic_barrier_polling_acquire_lock(barrier);
 
     uint32_t current_gen = atomic_load(&barrier->return_value.two_32.generation);
@@ -230,6 +232,9 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
         return_value.stop_request = broadcast_stop_request;
         return_value.generation = current_gen + 1;
 
+        // cancel the sgi waking up request, because the thread is going to wake up.
+        current_cpu->sgi_sender_time_ns_valid = false;
+
         // increase the generation and notify others.
         atomic_store(&barrier->return_value.one_64, *((uint64_t *)&return_value));
 
@@ -247,12 +252,12 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
             *((uint64_t *)&barrier_return_value) = atomic_load(&barrier->return_value.one_64);
 
             if (barrier_return_value.generation != current_gen) {
+                current_cpu->sgi_sender_time_ns_valid = false;
                 break;
             }
 
             if (quantum_allow_interrupt_wakeup_inside) {
                 // Now, we need to check whether the CPU has work to do
-                assert(current_cpu != NULL);
                 
                 // How many credits do I have?
                 if (current_cpu->quantum_budget <= 0) {
@@ -291,7 +296,7 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
                         current_cpu->quantum_budget = new_budget_on_acceptance;
                     }
 
-                    // cleared, meaning that the time is updated.
+                    // cleared, meaning that the time is updated and the thread is waken up.
                     current_cpu->sgi_sender_time_ns_valid = false;
                 }
 

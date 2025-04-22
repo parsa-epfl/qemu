@@ -1865,11 +1865,21 @@ static void icc_generate_sgi(CPUARMState *env, GICv3CPUState *cs,
             // keep the smallest remaining time.
             target_cpu->sgi_sender_remaining_time_ns = MIN(target_cpu->sgi_sender_remaining_time_ns, remaining_ns);
             // this must be within the same quantum.
-            assert(target_cpu->sgi_sender_quantum_generation == quantum_generation);
+            if (target_cpu->sgi_sender_quantum_generation != quantum_generation) {
+                qemu_log("target_cpu has received a sgi at quantum generation %lu, but another sgi has been sent at quantum generation %lu\n",
+                         target_cpu->sgi_sender_quantum_generation, quantum_generation);
+                assert(target_cpu->sgi_sender_quantum_generation == quantum_generation);
+            }
+            
         } else {
             target_cpu->sgi_sender_time_ns_valid = true;
             target_cpu->sgi_sender_remaining_time_ns = remaining_ns;
             target_cpu->sgi_sender_quantum_generation = quantum_generation;
+            // only two cases are possible: (1) two threads are in the same quantum; (2) target cpu has not increased its quantum generation.
+            assert(
+                target_cpu->quantum_generation == quantum_generation ||
+                target_cpu->quantum_generation == (quantum_generation - 1)
+            );
         }
 
         /* The redistributor will check against its own GICR_NSACR as needed */

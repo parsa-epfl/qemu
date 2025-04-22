@@ -211,7 +211,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
     cpu->target_cycle_on_instruction = 0;
     cpu->touched_timer_during_last_quantum = 0;
 
-    cpu->sgi_sender_time_ns_valid = 0;
+    cpu->sgi_sender_time_ns_valid = false;
     cpu->sgi_sender_remaining_time_ns = 0;
     cpu->sgi_sender_quantum_generation = 0;
 
@@ -341,7 +341,6 @@ static void *mttcg_cpu_thread_fn(void *arg)
 
         // it is possible that the quantum budget is depleted due to the idle state.
         if (affiliated_with_quantum && cpu->quantum_budget_depleted) {
-            qemu_mutex_unlock_iothread();
             cpu->quantum_budget_depleted = false;
             if (affiliated_with_quantum) {
                 do {
@@ -349,6 +348,10 @@ static void *mttcg_cpu_thread_fn(void *arg)
                     cpu_virtual_time[cpu->cpu_index].next_deadline_in_ns = -1;
                     bool stop_request = false;
 
+                    // before going to sleep, I need to reset the sgi wakeup time so that others can pass the time.
+                    cpu->sgi_sender_time_ns_valid = false;
+
+                    qemu_mutex_unlock_iothread();
                     uint64_t new_generation = dynamic_barrier_polling_wait(
                         &quantum_barrier, 
                         cpu->quantum_generation, 
@@ -356,6 +359,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
                         cpu->touched_timer_during_last_quantum != 0
                     );
 
+                    qemu_mutex_lock_iothread();
                     if (new_generation == old_generation) {
                         // The CPU thread is waken up in the middle of the quantum
                         assert(quantum_allow_interrupt_wakeup_inside);
@@ -383,7 +387,6 @@ static void *mttcg_cpu_thread_fn(void *arg)
             } else {
                 assert(false);
             }
-            qemu_mutex_lock_iothread();
         }
     } while (!cpu->unplug || cpu_can_run(cpu));
 
