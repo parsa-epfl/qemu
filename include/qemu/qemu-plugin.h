@@ -905,6 +905,14 @@ CYAN_API bool qemu_plugin_register_loadvm_cb(qemu_plugin_snapshot_cb_t cb);
  */
 CYAN_API uint64_t qemu_plugin_get_quantum_size(void);
 
+typedef enum qemu_plugin_snapshot_format_t {
+  QEMU_PLUGIN_SNAPSHOT_FORMAT_INTERNAL_RAW = 0,
+  QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_RAW = 1,
+  QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_ZSTD = 2,
+  QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_ZSTD_BASE = 4, // A complete snapshot, with zstd compression. <name>.state.zstd and <name>.basemem.zstd will be created.
+  QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA = 5, // an incremental snapshot based on the prior snapshot. <name>.state.zstd, <name>.deltamem.list, and <name>.deltamem.bin will be created.
+} qemu_plugin_snapshot_format_t;
+
 /**
  * qemu_plugin_savevm - save the VM state.
  * @name: the name of the snapshot.
@@ -914,7 +922,7 @@ CYAN_API uint64_t qemu_plugin_get_quantum_size(void);
  * This function is a wrapper of the QEMU function `save_snapshot`.
  * It prints the error directly to the console.
  */
-CYAN_API void qemu_plugin_savevm(const char *name, bool use_xdelta, const char *xdelta_source_name);
+CYAN_API void qemu_plugin_savevm(const char *name, qemu_plugin_snapshot_format_t format);
 
 CYAN_API typedef void (*qemu_plugin_event_loop_poll_cb_t)(void);
 

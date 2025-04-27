@@ -165,11 +165,6 @@ struct CPUAddressSpace {
     MemoryListener tcg_as_listener;
 };
 
-struct DirtyBitmapSnapshot {
-    ram_addr_t start;
-    ram_addr_t end;
-    unsigned long dirty[];
-};
 
 static void phys_map_node_reserve(PhysPageMap *map, unsigned nodes)
 {

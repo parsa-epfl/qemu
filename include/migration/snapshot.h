@@ -18,10 +18,12 @@
 #include "qapi/qapi-builtin-types.h"
 
 typedef enum SnapshotFormat {
-    SNAPSHOT_FORMAT_INTERNAL_RAW,
-    SNAPSHOT_FORMAT_EXTERNAL_RAW,
-    SNAPSHOT_FORMAT_EXTERNAL_ZSTD,
-    SNAPSHOT_FORMAT_EXTERNAL_XDELTA
+    SNAPSHOT_FORMAT_INTERNAL_RAW = 0,
+    SNAPSHOT_FORMAT_EXTERNAL_RAW = 1,
+    SNAPSHOT_FORMAT_EXTERNAL_ZSTD = 2,
+    SNAPSHOT_FORMAT_EXTERNAL_XDELTA = 3, // DEPRECATED
+    SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_ZSTD_BASE = 4, // A complete snapshot, with zstd compression. <name>.state.zstd and <name>.basemem.zstd will be created.
+    SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA = 5, // an incremental snapshot based on the prior snapshot. <name>.state.zstd, <basename>-$i.list,<basename>-$i.delta, and <name>.loc will be created.
 } SnapshotFormat;
 
 
