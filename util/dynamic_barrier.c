@@ -219,7 +219,7 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
                     qemu_notify_event();
 
                     // wait for the machine state to become suspended for VM.
-                    while (runstate_get() != RUN_STATE_SAVE_VM) {
+                    while (current_cpu->stop != true) {
                         sched_yield();
                     }
                 }
