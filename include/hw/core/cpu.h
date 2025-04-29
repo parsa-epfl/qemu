@@ -451,7 +451,7 @@ struct CPUState {
     uint64_t target_cycle_on_instruction; 
 
     // State for deduction of the quantum.
-    uint64_t ip10ps; // instruction per 10 pico second . 0 means this core is not managed by the quantum.
+    uint64_t ip100ns; // instruction per 10 pico second . 0 means this core is not managed by the quantum.
     int64_t quantum_budget;
     uint64_t quantum_generation;
     uint64_t quantum_required;

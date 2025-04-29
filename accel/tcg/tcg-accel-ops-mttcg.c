@@ -41,13 +41,14 @@
 
 #include "qemu/dynamic_barrier.h"
 #include "sysemu/quantum.h"
+#include <bits/time.h>
 #include <stdio.h>
 
 // const uint64_t QUANTUM_SIZE = 1000000; // 1M
 dynamic_barrier_polling_t quantum_barrier;
 
 typedef struct core_meta_info_t {
-    uint64_t ip10ps;
+    uint64_t ip100ns;
     uint64_t affinity_core_idx;
 } core_meta_info_t;
 
@@ -56,7 +57,7 @@ static core_meta_info_t core_info_table[256];
 void mttcg_initialize_core_info_table(const char *file_name) {
     // By default, all cores' IPC is 0, which means not managed by the IPC and the quantum.
     for(uint64_t i = 0; i < 256; ++i) {
-        core_info_table[i].ip10ps = 0;
+        core_info_table[i].ip100ns = 0;
         core_info_table[i].affinity_core_idx = i;
     }
 
@@ -86,9 +87,9 @@ void mttcg_initialize_core_info_table(const char *file_name) {
     // Now, read every line and fill the structure.
     while(fgets(line, 1024, fp) != NULL) {
         char *token = strtok(line, ",");
-        double ipc = strtod(token, NULL);
-        core_info_table[core_id].ip10ps = (uint64_t)(ipc * 100);
-        assert(core_info_table[core_id].ip10ps > 0 && "IPC should be greater than 0");
+        double ipns = strtod(token, NULL);
+        core_info_table[core_id].ip100ns = (uint64_t)(ipns * 100);
+        assert(core_info_table[core_id].ip100ns > 0 && "IPNS should be greater than 0");
         token = strtok(NULL, ",");
         core_info_table[core_id].affinity_core_idx = atoi(token);
         core_id += 1;
@@ -121,7 +122,7 @@ static void mttcg_force_rcu(Notifier *notify, void *data)
 static uint64_t get_current_timestamp_ns(void) {
     struct timespec ts;
     // Get the current time
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
 
     // Convert to nanoseconds
     // tv_sec is seconds, tv_nsec is nanoseconds
@@ -183,7 +184,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
     MttcgForceRcuNotifier force_rcu;
     CPUState *cpu = arg;
 
-    cpu->ip10ps = core_info_table[cpu->cpu_index].ip10ps;
+    cpu->ip100ns = core_info_table[cpu->cpu_index].ip100ns;
 
     assert(tcg_enabled());
     g_assert(!icount_enabled());
@@ -215,18 +216,18 @@ static void *mttcg_cpu_thread_fn(void *arg)
     cpu->sgi_sender_remaining_time_ns = 0;
     cpu->sgi_sender_quantum_generation = 0;
 
-    bool affiliated_with_quantum = cpu->ip10ps && quantum_enabled();
+    bool affiliated_with_quantum = cpu->ip100ns && quantum_enabled();
 
     // register the current thread to the barrier.
     if (affiliated_with_quantum) {
         cpu->quantum_generation = dynamic_barrier_polling_increase_by_1(&quantum_barrier);
-        cpu->quantum_budget = (quantum_size * cpu->ip10ps) / 100;
+        cpu->quantum_budget = (quantum_size * cpu->ip100ns) / 100;
         assert(cpu->quantum_budget > 0); 
         cpu->quantum_required = 0;
         cpu->quantum_budget_depleted = 0;
 
 
-        qemu_log("Core%u Quantum Count: %lu cycles, %lu instructions \n", cpu->cpu_index, quantum_size, quantum_size * cpu->ip10ps);
+        qemu_log("Core%u Quantum Count: %lu cycles, %lu instructions \n", cpu->cpu_index, quantum_size, quantum_size * cpu->ip100ns);
     }
 
     current_cpu = cpu;
@@ -269,7 +270,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
                         );
                         
                         assert(new_generation == old_generation + 1);
-                        cpu->quantum_budget += (quantum_size * cpu->ip10ps) / 100;
+                        cpu->quantum_budget += (quantum_size * cpu->ip100ns) / 100;
                         cpu->quantum_generation = new_generation;
                         cpu->touched_timer_during_last_quantum = 0;
 
@@ -317,7 +318,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
             
                         
                         assert(new_generation == old_generation + 1);
-                        cpu->quantum_budget += (quantum_size * cpu->ip10ps) / 100;
+                        cpu->quantum_budget += (quantum_size * cpu->ip100ns) / 100;
                         cpu->quantum_generation = new_generation;
                         cpu->touched_timer_during_last_quantum = 0;
 
@@ -373,7 +374,7 @@ static void *mttcg_cpu_thread_fn(void *arg)
                         cpu->quantum_budget = 0;   
                     }
 
-                    cpu->quantum_budget += (quantum_size * cpu->ip10ps) / 100;
+                    cpu->quantum_budget += (quantum_size * cpu->ip100ns) / 100;
                     cpu->quantum_generation = new_generation;
                     cpu->touched_timer_during_last_quantum = 0;
 

@@ -289,7 +289,7 @@ uint32_t dynamic_barrier_polling_wait(dynamic_barrier_polling_t *barrier, uint32
                     uint64_t sender_time = current_cpu->sgi_sender_remaining_time_ns;
                     uint64_t sender_generation = current_cpu->sgi_sender_quantum_generation;
                     assert(sender_generation == current_gen);
-                    int64_t new_budget_on_acceptance = (sender_time * current_cpu->ip10ps) / 100;
+                    int64_t new_budget_on_acceptance = (sender_time * current_cpu->ip100ns) / 100;
                     
                     // update the budget if the new budget is smaller than the current budget, meaning that the sleeping has happened.
                     if (new_budget_on_acceptance < current_cpu->quantum_budget) {

@@ -1858,7 +1858,7 @@ static void icc_generate_sgi(CPUARMState *env, GICv3CPUState *cs,
         // deliver the time of the interrupt source to the target CPU.
         CPUState *cpu = cs->cpu;
         uint64_t quantum_generation = cpu->quantum_generation;
-        uint64_t remaining_ns = (cpu->quantum_budget * 100) / cpu->ip10ps;
+        uint64_t remaining_ns = (cpu->quantum_budget * 100) / cpu->ip100ns;
         
         CPUState *target_cpu = ocs->cpu;
         if (target_cpu->sgi_sender_time_ns_valid) {

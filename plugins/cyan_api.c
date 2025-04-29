@@ -274,7 +274,7 @@ void qemu_plugin_set_vcpu_vtime(uint32_t cpu_idx, uint64_t vtime) {
 
 uint64_t qemu_plugin_get_vcpu_ip10ps(uint32_t cpu_idx) {
   assert(current_cpu && current_cpu->cpu_index == cpu_idx);
-  return current_cpu->ip10ps;
+  return current_cpu->ip100ns;
 }
 
 bool qemu_plugin_register_flushing_local_tlb_cb(
