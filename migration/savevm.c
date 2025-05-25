@@ -3293,7 +3293,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
                 incremental_snapshot_context.page_location
             );
 
-            const bool ALSO_DUMP_COMPLETE_MAIN_MEMORY = true;
+            const bool ALSO_DUMP_COMPLETE_MAIN_MEMORY = false;
             if (ALSO_DUMP_COMPLETE_MAIN_MEMORY) {
                 char dump_file_name[800];
                 snprintf(dump_file_name, sizeof(dump_file_name), "%s-%s.auxmem.zstd", sn->name, main_ram->idstr);
