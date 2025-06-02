@@ -49,6 +49,7 @@
 #include "qemu/error-report.h"
 #include "sysemu/cpus.h"
 #include "exec/memory.h"
+#include "exec/ramblock.h"
 #include "exec/target_page.h"
 #include "trace.h"
 #include "qemu/iov.h"
@@ -70,6 +71,8 @@
 #include "sysemu/qtest.h"
 #include "options.h"
 #include "io/channel-command.h"
+
+#include "external_snapshot_util.h"
 
 const unsigned int postcopy_ram_discard_version;
 
@@ -3130,15 +3133,6 @@ void qmp_xen_load_devices_state(const char *filename, Error **errp)
     migration_incoming_state_destroy();
 }
 
-static char *get_zstd(Error **errp)
-{
-    char *zstd = g_find_program_in_path("zstd");
-    if (!zstd)
-        error_setg(errp, "zstd not found in PATH");
-
-    return zstd;
-}
-
 static char *get_xdelta3(Error **errp)
 {
     char *xdelta3 = g_find_program_in_path("xdelta3");
@@ -3148,9 +3142,48 @@ static char *get_xdelta3(Error **errp)
     return xdelta3;
 }
 
+static struct {
+    GHashTable *page_location;
+    uint64_t index;
+    char base_name[256];
+} incremental_snapshot_context = {
+    .page_location = NULL,
+    .index = 0,
+    .base_name = {0},
+};
+
+static struct RAMBlock *get_main_memory(void) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        int compare = strcmp(ram->idstr, "mach-virt.ram");
+        // printf("RAMBlock %s\n", ram->idstr);
+        if (compare) {
+            continue;
+        }
+        return ram;
+    }
+    assert(false);
+}
+
+static void pause_snapshotting_main_memory(bool stop) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        if (strcmp(ram->idstr, "mach-virt.ram")) {
+            continue;
+        }
+        if (stop) {
+            qemu_ram_unset_migratable(ram);
+        } else {
+            qemu_ram_set_migratable(ram);
+        }
+    }
+}
+
 bool load_snapshot(const char *name, const char *vmstate,
                    bool has_devices, strList *devices, Error **errp)
 {
+
+    
     BlockDriverState *bs_vm_state;
     QEMUSnapshotInfo sn;
     QEMUFile *f;
@@ -3185,17 +3218,22 @@ bool load_snapshot(const char *name, const char *vmstate,
     char zstd_snapshot_name[293];
     char xdelta_snapshot_name[295];
     char raw_snapshot_name[293];
+    char incremental_base_name[350];
+    char incremental_loc_name[350];
     snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
     snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
     snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
+    snprintf(incremental_base_name, sizeof(incremental_base_name), "%s.basemem.zstd", sn.name);
+    snprintf(incremental_loc_name, sizeof(incremental_loc_name), "%s.loc", sn.name);
 
     if (ret < 0) {
         return false;
     } else if (sn.vm_state_size == 0 && 
                 !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
-                !(g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) &&
-                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)
-            ) {
+                !g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
+                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
+                !g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) &&
+                !g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
                    " offline using qemu-img");
         return false;
@@ -3215,9 +3253,11 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
+    bool is_incremental_base = false;
+    bool is_incremental_delta = false;
+
     /* restore the VM state */
-    
-    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) && g_file_test("base", G_FILE_TEST_IS_REGULAR)) {
+    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         char *xdelta3 = get_xdelta3(errp);
         if (!xdelta3)
             return false;
@@ -3240,29 +3280,13 @@ bool load_snapshot(const char *name, const char *vmstate,
         }
 
     } else if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        char *zstd = get_zstd(errp);
-        if (!zstd)
-            return false;
-
-        const char *args[] = {zstd, "-f", "-q", "-T0", "-d", "-c", zstd_snapshot_name, NULL};
-
-        QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
-        g_free(zstd);
-        if (!ioc) {
-            error_setg(errp, "Could not create pipe for zstd");
-            return false;
-        }
-
-        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
-
-        f = qemu_file_new_input(QIO_CHANNEL(ioc));
+        f = qemu_file_open_zstd_input(zstd_snapshot_name, errp);
         if (!f) {
             error_setg(errp, "Could not open VM state file");
             return false;
         }
 
-    } else if (false && g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        // It is not expected to load raw format snapsho in this QEMU. A better replacement is always zstd or xdelta3 if there is no requirement to create a snapshot.
+    } else if (g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         QIOChannelFile *ioc = qio_channel_file_new_path(raw_snapshot_name, O_RDONLY | O_BINARY, 0, errp);
         if (!ioc) {
             error_setg(errp, "Could not open snapshot file");
@@ -3272,6 +3296,21 @@ bool load_snapshot(const char *name, const char *vmstate,
         qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
 
         f = qemu_file_new_input(QIO_CHANNEL(ioc));
+    } else if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) || g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
+        // We are going to load the state from <name>.state.zstd.
+        char state_file_name[350];
+        snprintf(state_file_name, sizeof(state_file_name), "%s.state.zstd", sn.name);
+        f = qemu_file_open_zstd_input(state_file_name, errp);
+        if (!f) {
+            error_setg(errp, "Could not open VM state file");
+            return false;
+        }
+
+        if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR)) {
+            is_incremental_base = true;
+        } else {
+            is_incremental_delta = true;
+        }
     } else {
         f = qemu_fopen_bdrv(bs_vm_state, 0);
         if (!f) {
@@ -3287,9 +3326,233 @@ bool load_snapshot(const char *name, const char *vmstate,
         ret = -EINVAL;
         goto err_drain;
     }
+
+    // First, load the memory so that the virtio devices are not confused.
+    if (is_incremental_base) {
+        QEMUFile *f = qemu_file_open_zstd_input(incremental_base_name, errp);
+        if (!f) {
+            error_setg(errp, "Could not open VM state file");
+            return false;
+        }
+        // Very nice. Now it is time to load the memory.
+        struct RAMBlock *main_ram = get_main_memory();
+        // Read the memory completely from the buffer.
+        ssize_t len = qemu_get_buffer(f, main_ram->host, main_ram->used_length);
+        if (len != main_ram->used_length) {
+            error_setg(errp, "Could not read the memory completely");
+            ret = -2;
+            if (len < 0) {
+                ret = len;
+            }
+
+            goto err_drain;
+        }
+    }
+
+    if (is_incremental_delta) {
+        char loc_file[300];
+        snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
+        FILE *loc_file_fd = fopen(loc_file, "rb");
+        
+        if (!loc_file_fd) {
+            error_setg(errp, "Could not open the location file");
+            ret = -2;
+            goto err_drain;
+        }
+
+        // allocate the page location table.
+        if (incremental_snapshot_context.page_location != NULL) {
+            g_hash_table_destroy(incremental_snapshot_context.page_location);
+        }
+        incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+
+        deserialize_incremental_loc_file(
+            loc_file_fd, 
+            incremental_snapshot_context.base_name, 
+            sizeof(incremental_snapshot_context.base_name), 
+            &incremental_snapshot_context.index,
+            incremental_snapshot_context.page_location
+        );
+        fclose(loc_file_fd);
+
+        // First, we need to load the base memory.
+        {
+            char base_mem_file[300];
+            snprintf(base_mem_file, sizeof(base_mem_file), "%s.basemem.zstd", incremental_snapshot_context.base_name);
+            QEMUFile *f = qemu_file_open_zstd_input(base_mem_file, errp);
+            if (!f) {
+                error_setg(errp, "Could not open the base memory file");
+                ret = -2;
+                goto err_drain;
+            }
+
+            // Read the memory completely from the buffer.
+            struct RAMBlock *main_ram = get_main_memory();
+            // Read the memory completely from the buffer.
+            ssize_t len = qemu_get_buffer(f, main_ram->host, main_ram->used_length);
+            if (len != main_ram->used_length) {
+                error_setg(errp, "Could not read the memory completely");
+                ret = -2;
+                if (len < 0) {
+                    ret = len;
+                }
+
+                goto err_drain;
+            }
+            qemu_fclose(f);
+        }
+        
+        // Now we need to load the delta memory.
+        // We need to group the pages by their file number.
+        // file_number -> [(page_number, offset)]
+        struct page_number_and_offset_t {
+            uint64_t offset_in_memory;
+            uint64_t offset_in_file;
+        };
+
+        GHashTable *page_location_grouped = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
+
+        {
+            GHashTableIter iter;
+            gpointer key, value;
+            g_hash_table_iter_init(&iter, incremental_snapshot_context.page_location);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                struct page_location_pair_t *info = value;
+                GArray *array = g_hash_table_lookup(page_location_grouped, GINT_TO_POINTER(info->which_file));
+                if (!array) {
+                    array = g_array_new(FALSE, FALSE, sizeof(struct page_number_and_offset_t));
+                    g_hash_table_insert(page_location_grouped, GINT_TO_POINTER(info->which_file), array);
+                }
+                struct page_number_and_offset_t *page_info = g_new(struct page_number_and_offset_t, 1);
+                page_info->offset_in_memory = (uint64_t)key;
+                page_info->offset_in_file = info->file_offset;
+                g_array_append_vals(array, page_info, 1);
+            }
+        }
+        
+        // Now, we open each file, and read the page in the file.
+        {
+            GHashTableIter iter;
+            gpointer key, value;
+            g_hash_table_iter_init(&iter, page_location_grouped);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                uint64_t file_number = (uint64_t)key;
+                GArray *array = value;
+
+                char delta_file_name[300];
+                snprintf(delta_file_name, sizeof(delta_file_name), "%s-%lu.delta", incremental_snapshot_context.base_name, file_number);
+
+                FILE *delta_file = fopen(delta_file_name, "rb");
+                if (!delta_file) {
+                    error_setg(errp, "Could not open the delta file");
+                    ret = -2;
+                    goto err_drain;
+                }
+
+                // Read the memory completely from the buffer.
+                struct RAMBlock *main_ram = get_main_memory();
+                for (uint64_t i = 0; i < array->len; ++i) {
+                    struct page_number_and_offset_t *page_info = &g_array_index(array, struct page_number_and_offset_t, i);
+                    if (page_info->offset_in_memory == 8704 * qemu_target_page_size()) {
+                        printf("Catching page %lu from file %s with offset = %lu \n", page_info->offset_in_memory, delta_file_name, page_info->offset_in_file);
+                        puts("Catching page\n");
+                    }
+
+                    fseeko(delta_file, page_info->offset_in_file, SEEK_SET);
+                    ssize_t len = fread(main_ram->host + (page_info->offset_in_memory), qemu_target_page_size(), 1, delta_file);
+                    if (len != 1) {
+                        error_setg(errp, "Could not read the memory completely");
+                        ret = -2;
+                        if (len < 0) {
+                            ret = len;
+                        }
+
+                        fclose(delta_file);
+                        goto err_drain;
+                    }
+                }
+                fclose(delta_file);
+
+                // We can free the array now.
+                g_array_free(array, TRUE);
+            }
+
+            g_hash_table_destroy(page_location_grouped);
+        }
+
+        // Now, we may want to verify the memory as well.
+        {
+            struct RAMBlock *main_ram = get_main_memory();
+            char aux_file_name[300];
+            snprintf(aux_file_name, sizeof(aux_file_name), "%s-%s.auxmem.zstd", sn.name, "mach-virt.ram");
+            if (g_file_test(aux_file_name, G_FILE_TEST_IS_REGULAR)) {
+                QEMUFile *f = qemu_file_open_zstd_input(aux_file_name, errp);
+                if (!f) {
+                    error_setg(errp, "Could not open VM state file");
+                    return false;
+                }
+
+                qemu_log("Verifying the memory...\n");
+                uint8_t *incoming_page = g_new(uint8_t, qemu_target_page_size());
+                // Read page by page and compare.
+                for (uint64_t i = 0; i < main_ram->used_length / qemu_target_page_size(); ++i) {
+                    uint8_t *page = main_ram->host + i * qemu_target_page_size();
+                    ssize_t len = qemu_get_buffer(f, incoming_page, qemu_target_page_size());
+                    if (len != qemu_target_page_size()) {
+                        error_setg(errp, "Could not read the memory completely");
+                        ret = -2;
+                        if (len < 0) {
+                            ret = len;
+                        }
+
+                        goto err_drain;
+                    }
+                    if (memcmp(page, incoming_page, qemu_target_page_size()) != 0) {
+                        qemu_log("The memory is not verified at position: %lu\n", i);
+                        error_setg(errp, "The memory is not verified");
+                        ret = -2;
+                        goto err_drain;
+                    }
+                }
+
+                qemu_log("The memory is verified.\n");
+            }
+        }
+    }
+
+    if (is_incremental_base || is_incremental_delta) {
+        // We need to make the main memory not migratable.
+        pause_snapshotting_main_memory(true);
+    }
+
     aio_context_acquire(aio_context);
     ret = qemu_loadvm_state(f);
     migration_incoming_state_destroy();
+
+    if (is_incremental_base || is_incremental_delta) {
+        // We need to make the main memory not migratable.
+        pause_snapshotting_main_memory(false);
+    }
+
+    get_main_memory()->mr->dirty_log_mask |= (1 << DIRTY_MEMORY_MIGRATION); // this is needed for tracking I/O device writes.
+
+    if (is_incremental_base || is_incremental_delta) {
+        // We need to clean the dirty bitmap after loading the snapshot.
+        struct RAMBlock *main_ram = get_main_memory();
+        MemoryRegion *mr = main_ram->mr;
+        g_free(memory_region_snapshot_and_clear_dirty(mr, 0, main_ram->used_length, DIRTY_MEMORY_MIGRATION));
+
+        if (is_incremental_base) {
+            // set up the incremental snapshot context from scratch.
+            if (incremental_snapshot_context.page_location != NULL) {
+                g_hash_table_destroy(incremental_snapshot_context.page_location);
+            }
+            incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+            strcpy(incremental_snapshot_context.base_name, sn.name);
+            incremental_snapshot_context.index = 0;
+        }
+    }
+
     aio_context_release(aio_context);
 
     bdrv_drain_all_end();
