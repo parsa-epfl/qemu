@@ -2012,6 +2012,7 @@ RAMBlock *qemu_ram_alloc(ram_addr_t size, uint32_t ram_flags,
                          MemoryRegion *mr, Error **errp)
 {
     assert((ram_flags & ~(RAM_SHARED | RAM_NORESERVE)) == 0);
+    ram_flags |= RAM_NORESERVE;
     return qemu_ram_alloc_internal(size, size, NULL, NULL, ram_flags, mr, errp);
 }
 
@@ -2022,7 +2023,7 @@ RAMBlock *qemu_ram_alloc_resizeable(ram_addr_t size, ram_addr_t maxsz,
                                      MemoryRegion *mr, Error **errp)
 {
     return qemu_ram_alloc_internal(size, maxsz, resized, NULL,
-                                   RAM_RESIZEABLE, mr, errp);
+                                   RAM_RESIZEABLE | RAM_NORESERVE, mr, errp);
 }
 
 static void reclaim_ramblock(RAMBlock *block)

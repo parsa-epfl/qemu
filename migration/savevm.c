@@ -55,6 +55,7 @@
 #include "qemu/iov.h"
 #include "qemu/job.h"
 #include "qemu/main-loop.h"
+#include "qemu/userfaultfd.h"
 #include "block/snapshot.h"
 #include "qemu/cutils.h"
 #include "io/channel-buffer.h"
@@ -3179,11 +3180,111 @@ static void pause_snapshotting_main_memory(bool stop) {
     }
 }
 
+static void *uffd_on_demand_thread(void *main_ram) {
+    RAMBlock *ram = (RAMBlock *)main_ram;
+    assert(ram != NULL);
+
+    uint8_t *buffer = g_malloc0(qemu_target_page_size());
+
+    struct uffd_msg msg;
+
+    // handle page fault on demand.
+    while (true) {
+        int size = uffd_read_events(ram->on_demand_uffd_fd, &msg, 1) > 0;
+        assert(size >= 0);
+
+        if (size == 0) continue;
+
+        // handle the page fault. It has to be a page fault.
+        if (msg.event != UFFD_EVENT_PAGEFAULT) {
+            assert(false && "Unexpected event");
+            continue;
+        }
+
+        // get the fault address.
+        uint64_t fault_address = msg.arg.pagefault.address;
+        assert(fault_address % qemu_target_page_size() == 0); // should be page aligned.
+
+        // Figure out the offset.
+        uint64_t offset = fault_address - (uint64_t)ram->host;
+        assert(offset < ram->used_length);
+
+        // Load the page. First check the index. 
+        struct page_location_pair_t *info = ram->on_demand_index ? g_hash_table_lookup(
+            ram->on_demand_index,
+            GINT_TO_POINTER(offset)
+        ) : NULL;
+
+        FILE *checkpoint_file = NULL;
+
+        if (info) {
+            // this means it is in a certain file.
+            // find the file.
+            char incremental_file_name[350];
+            snprintf(
+                incremental_file_name, 
+                sizeof(incremental_file_name), 
+                "%s.mem/%lu", 
+                ram->on_demand_file_name,
+                info->which_file
+            );
+
+            // open the file and seek to the offset.
+            checkpoint_file = fopen(incremental_file_name, "rb");
+            assert(checkpoint_file != NULL);
+
+            fseek(checkpoint_file, info->file_offset, SEEK_SET);
+
+            // read a page.
+            uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
+            assert(size == 1 && "Failed to read a page from the incremental file");
+        } else {
+            // this means it is in the base file.
+            // We need to load the base file.
+            char base_file_name[350];
+            snprintf(base_file_name, sizeof(base_file_name), "%s.mem/base", ram->on_demand_file_name);
+
+            // open the base file and seek to the offset.
+            checkpoint_file = fopen(base_file_name, "rb");
+            assert(checkpoint_file != NULL);
+
+            fseek(checkpoint_file, offset, SEEK_SET);
+            // read a page.
+            uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
+            assert(size == 1 && "Failed to read a page from the base file");
+        }
+
+        // before copy the page, we need to compare the page with the reference.
+        if (ram->on_demand_ref_host) {
+            // compare the page with the reference.
+            uint8_t *ref_offset = (uint8_t *)(offset + (uint64_t)ram->on_demand_ref_host);
+            // do a 4K page compare.
+            for (uint i = 0; i < qemu_target_page_size(); ++i) {
+                if (buffer[i] != ref_offset[i]) {
+                    printf("Mismatch with reference page at offset %lu\n", offset + i);
+                    assert(false && "The page is not the same as the reference page");
+                }
+            }
+        }
+
+        // copy the page to the fault address.
+        assert(uffd_copy_page(
+            ram->on_demand_uffd_fd, 
+            (void *)fault_address,  
+            buffer,
+            qemu_target_page_size(),
+            false
+        ) == 0);
+
+        // done
+        fclose(checkpoint_file);
+
+    }
+}
+
 bool load_snapshot(const char *name, const char *vmstate,
                    bool has_devices, strList *devices, Error **errp)
 {
-
-    
     BlockDriverState *bs_vm_state;
     QEMUSnapshotInfo sn;
     QEMUFile *f;
@@ -3223,7 +3324,7 @@ bool load_snapshot(const char *name, const char *vmstate,
     snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
     snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
     snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
-    snprintf(incremental_base_name, sizeof(incremental_base_name), "%s.basemem.zstd", sn.name);
+    snprintf(incremental_base_name, sizeof(incremental_base_name), "%s.mem/base", sn.name);
     snprintf(incremental_loc_name, sizeof(incremental_loc_name), "%s.loc", sn.name);
 
     if (ret < 0) {
@@ -3327,69 +3428,83 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
-    // First, load the memory so that the virtio devices are not confused.
-    if (is_incremental_base) {
-        QEMUFile *f = qemu_file_open_zstd_input(incremental_base_name, errp);
-        if (!f) {
-            error_setg(errp, "Could not open VM state file");
-            return false;
-        }
-        // Very nice. Now it is time to load the memory.
-        struct RAMBlock *main_ram = get_main_memory();
-        // Read the memory completely from the buffer.
-        ssize_t len = qemu_get_buffer(f, main_ram->host, main_ram->used_length);
-        if (len != main_ram->used_length) {
-            error_setg(errp, "Could not read the memory completely");
-            ret = -2;
-            if (len < 0) {
-                ret = len;
-            }
+    bool IS_ON_DEMAND_LOADING = is_incremental_base || is_incremental_delta;
+    bool ON_DEMAND_CHECKING = false;
+    RAMBlock *main_ram = get_main_memory();
+    uint8_t *memory_addr_to_load = main_ram->host;
 
-            goto err_drain;
-        }
-    }
+    if (IS_ON_DEMAND_LOADING) {
+        // set up the on-demand loading.
+        main_ram->on_demand_file_name = g_new0(char, 256);
+        main_ram->on_demand_index = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
 
-    if (is_incremental_delta) {
-        char loc_file[300];
-        snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
-        FILE *loc_file_fd = fopen(loc_file, "rb");
-        
-        if (!loc_file_fd) {
-            error_setg(errp, "Could not open the location file");
-            ret = -2;
-            goto err_drain;
-        }
-
-        // allocate the page location table.
-        if (incremental_snapshot_context.page_location != NULL) {
-            g_hash_table_destroy(incremental_snapshot_context.page_location);
-        }
-        incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
-
-        deserialize_incremental_loc_file(
-            loc_file_fd, 
-            incremental_snapshot_context.base_name, 
-            sizeof(incremental_snapshot_context.base_name), 
-            &incremental_snapshot_context.index,
-            incremental_snapshot_context.page_location
-        );
-        fclose(loc_file_fd);
-
-        // First, we need to load the base memory.
-        {
-            char base_mem_file[300];
-            snprintf(base_mem_file, sizeof(base_mem_file), "%s.basemem.zstd", incremental_snapshot_context.base_name);
-            QEMUFile *f = qemu_file_open_zstd_input(base_mem_file, errp);
-            if (!f) {
-                error_setg(errp, "Could not open the base memory file");
+        if (is_incremental_delta) {
+            char loc_file[300];
+            snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
+            FILE *loc_file_fd = fopen(loc_file, "rb");
+            
+            if (!loc_file_fd) {
+                error_setg(errp, "Could not open the location file");
                 ret = -2;
                 goto err_drain;
             }
 
+            // allocate the page location table.
+            if (main_ram->on_demand_index != NULL) {
+                g_hash_table_destroy(main_ram->on_demand_index);
+            }
+            main_ram->on_demand_index = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+
+            uint64_t _current_index = 0;
+
+            deserialize_incremental_loc_file(
+                loc_file_fd, 
+                main_ram->on_demand_file_name, 
+                256, 
+                &_current_index,
+                main_ram->on_demand_index
+            );
+
+            fclose(loc_file_fd);
+        } else {
+            strcpy(main_ram->on_demand_file_name, name);
+        }
+
+        main_ram->on_demand_uffd_fd = uffd_create_fd(0, false);
+        assert(main_ram->on_demand_uffd_fd >= 0); // uffd_create_fd() should not fail.
+
+        assert(uffd_register_memory(
+            main_ram->on_demand_uffd_fd, 
+            main_ram->host, 
+            main_ram->used_length, 
+            UFFDIO_REGISTER_MODE_MISSING,
+            &main_ram->on_demand_uffd_ioctls
+        ) == 0);
+
+        // add reference
+        if (ON_DEMAND_CHECKING) {
+            main_ram->on_demand_ref_host = qemu_anon_ram_alloc(main_ram->used_length, &main_ram->mr->align, false, true);
+            memory_addr_to_load = main_ram->on_demand_ref_host;
+        }
+        
+        // Start another thread to handle the uffd events.
+        assert(pthread_create(
+            &main_ram->on_demand_uffd_thread,
+            NULL,
+            uffd_on_demand_thread,
+            main_ram
+        ) == 0);
+    }
+
+    if (!(IS_ON_DEMAND_LOADING && !ON_DEMAND_CHECKING)) {
+           if (is_incremental_base) {
+            QEMUFile *f = qemu_file_open_input(incremental_base_name, errp);
+            if (!f) {
+                error_setg(errp, "Could not open VM state file");
+                return false;
+            }
             // Read the memory completely from the buffer.
-            struct RAMBlock *main_ram = get_main_memory();
-            // Read the memory completely from the buffer.
-            ssize_t len = qemu_get_buffer(f, main_ram->host, main_ram->used_length);
+            ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
             if (len != main_ram->used_length) {
                 error_setg(errp, "Could not read the memory completely");
                 ret = -2;
@@ -3399,123 +3514,173 @@ bool load_snapshot(const char *name, const char *vmstate,
 
                 goto err_drain;
             }
-            qemu_fclose(f);
         }
-        
-        // Now we need to load the delta memory.
-        // We need to group the pages by their file number.
-        // file_number -> [(page_number, offset)]
-        struct page_number_and_offset_t {
-            uint64_t offset_in_memory;
-            uint64_t offset_in_file;
-        };
 
-        GHashTable *page_location_grouped = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
-
-        {
-            GHashTableIter iter;
-            gpointer key, value;
-            g_hash_table_iter_init(&iter, incremental_snapshot_context.page_location);
-            while (g_hash_table_iter_next(&iter, &key, &value)) {
-                struct page_location_pair_t *info = value;
-                GArray *array = g_hash_table_lookup(page_location_grouped, GINT_TO_POINTER(info->which_file));
-                if (!array) {
-                    array = g_array_new(FALSE, FALSE, sizeof(struct page_number_and_offset_t));
-                    g_hash_table_insert(page_location_grouped, GINT_TO_POINTER(info->which_file), array);
-                }
-                struct page_number_and_offset_t *page_info = g_new(struct page_number_and_offset_t, 1);
-                page_info->offset_in_memory = (uint64_t)key;
-                page_info->offset_in_file = info->file_offset;
-                g_array_append_vals(array, page_info, 1);
+        if (is_incremental_delta) {
+            char loc_file[300];
+            snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
+            FILE *loc_file_fd = fopen(loc_file, "rb");
+            
+            if (!loc_file_fd) {
+                error_setg(errp, "Could not open the location file");
+                ret = -2;
+                goto err_drain;
             }
-        }
-        
-        // Now, we open each file, and read the page in the file.
-        {
-            GHashTableIter iter;
-            gpointer key, value;
-            g_hash_table_iter_init(&iter, page_location_grouped);
-            while (g_hash_table_iter_next(&iter, &key, &value)) {
-                uint64_t file_number = (uint64_t)key;
-                GArray *array = value;
 
-                char delta_file_name[300];
-                snprintf(delta_file_name, sizeof(delta_file_name), "%s-%lu.delta", incremental_snapshot_context.base_name, file_number);
+            // allocate the page location table.
+            if (incremental_snapshot_context.page_location != NULL) {
+                g_hash_table_destroy(incremental_snapshot_context.page_location);
+            }
+            incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
 
-                FILE *delta_file = fopen(delta_file_name, "rb");
-                if (!delta_file) {
-                    error_setg(errp, "Could not open the delta file");
+            deserialize_incremental_loc_file(
+                loc_file_fd, 
+                incremental_snapshot_context.base_name, 
+                sizeof(incremental_snapshot_context.base_name), 
+                &incremental_snapshot_context.index,
+                incremental_snapshot_context.page_location
+            );
+            fclose(loc_file_fd);
+
+            // First, we need to load the base memory.
+            {
+                char base_mem_file[300];
+                snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", incremental_snapshot_context.base_name);
+                QEMUFile *f = qemu_file_open_input(base_mem_file, errp);
+                if (!f) {
+                    error_setg(errp, "Could not open the base memory file");
                     ret = -2;
                     goto err_drain;
                 }
 
                 // Read the memory completely from the buffer.
-                struct RAMBlock *main_ram = get_main_memory();
-                for (uint64_t i = 0; i < array->len; ++i) {
-                    struct page_number_and_offset_t *page_info = &g_array_index(array, struct page_number_and_offset_t, i);
-                    if (page_info->offset_in_memory == 8704 * qemu_target_page_size()) {
-                        printf("Catching page %lu from file %s with offset = %lu \n", page_info->offset_in_memory, delta_file_name, page_info->offset_in_file);
-                        puts("Catching page\n");
+                ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
+                if (len != main_ram->used_length) {
+                    error_setg(errp, "Could not read the memory completely");
+                    ret = -2;
+                    if (len < 0) {
+                        ret = len;
                     }
 
-                    fseeko(delta_file, page_info->offset_in_file, SEEK_SET);
-                    ssize_t len = fread(main_ram->host + (page_info->offset_in_memory), qemu_target_page_size(), 1, delta_file);
-                    if (len != 1) {
-                        error_setg(errp, "Could not read the memory completely");
-                        ret = -2;
-                        if (len < 0) {
-                            ret = len;
-                        }
+                    goto err_drain;
+                }
+                qemu_fclose(f);
+            }
+            
+            // Now we need to load the delta memory.
+            // We need to group the pages by their file number.
+            // file_number -> [(page_number, offset)]
+            struct page_number_and_offset_t {
+                uint64_t offset_in_memory;
+                uint64_t offset_in_file;
+            };
 
-                        fclose(delta_file);
+            GHashTable *page_location_grouped = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
+
+            {
+                GHashTableIter iter;
+                gpointer key, value;
+                g_hash_table_iter_init(&iter, incremental_snapshot_context.page_location);
+                while (g_hash_table_iter_next(&iter, &key, &value)) {
+                    struct page_location_pair_t *info = value;
+                    GArray *array = g_hash_table_lookup(page_location_grouped, GINT_TO_POINTER(info->which_file));
+                    if (!array) {
+                        array = g_array_new(FALSE, FALSE, sizeof(struct page_number_and_offset_t));
+                        g_hash_table_insert(page_location_grouped, GINT_TO_POINTER(info->which_file), array);
+                    }
+                    struct page_number_and_offset_t *page_info = g_new(struct page_number_and_offset_t, 1);
+                    page_info->offset_in_memory = (uint64_t)key;
+                    page_info->offset_in_file = info->file_offset;
+                    g_array_append_vals(array, page_info, 1);
+                }
+            }
+            
+            // Now, we open each file, and read the page in the file.
+            {
+                GHashTableIter iter;
+                gpointer key, value;
+                g_hash_table_iter_init(&iter, page_location_grouped);
+                while (g_hash_table_iter_next(&iter, &key, &value)) {
+                    uint64_t file_number = (uint64_t)key;
+                    GArray *array = value;
+
+                    char delta_file_name[300];
+                    snprintf(delta_file_name, sizeof(delta_file_name), "%s.mem/%lu", incremental_snapshot_context.base_name, file_number);
+
+                    FILE *delta_file = fopen(delta_file_name, "rb");
+                    if (!delta_file) {
+                        error_setg(errp, "Could not open the delta file");
+                        ret = -2;
                         goto err_drain;
                     }
-                }
-                fclose(delta_file);
 
-                // We can free the array now.
-                g_array_free(array, TRUE);
+                    // Read the memory completely from the buffer.
+                    for (uint64_t i = 0; i < array->len; ++i) {
+                        struct page_number_and_offset_t *page_info = &g_array_index(array, struct page_number_and_offset_t, i);
+                        if (page_info->offset_in_memory == 8704 * qemu_target_page_size()) {
+                            printf("Catching page %lu from file %s with offset = %lu \n", page_info->offset_in_memory, delta_file_name, page_info->offset_in_file);
+                            puts("Catching page\n");
+                        }
+
+                        fseeko(delta_file, page_info->offset_in_file, SEEK_SET);
+                        ssize_t len = fread(memory_addr_to_load + (page_info->offset_in_memory), qemu_target_page_size(), 1, delta_file);
+                        if (len != 1) {
+                            error_setg(errp, "Could not read the memory completely");
+                            ret = -2;
+                            if (len < 0) {
+                                ret = len;
+                            }
+
+                            fclose(delta_file);
+                            goto err_drain;
+                        }
+                    }
+                    fclose(delta_file);
+
+                    // We can free the array now.
+                    g_array_free(array, TRUE);
+                }
+
+                g_hash_table_destroy(page_location_grouped);
             }
 
-            g_hash_table_destroy(page_location_grouped);
-        }
+            // Now, we may want to verify the memory as well.
+            {
+                struct RAMBlock *main_ram = get_main_memory();
+                char aux_file_name[300];
+                snprintf(aux_file_name, sizeof(aux_file_name), "%s-%s.auxmem.zstd", sn.name, "mach-virt.ram");
+                if (g_file_test(aux_file_name, G_FILE_TEST_IS_REGULAR)) {
+                    QEMUFile *f = qemu_file_open_zstd_input(aux_file_name, errp);
+                    if (!f) {
+                        error_setg(errp, "Could not open VM state file");
+                        return false;
+                    }
 
-        // Now, we may want to verify the memory as well.
-        {
-            struct RAMBlock *main_ram = get_main_memory();
-            char aux_file_name[300];
-            snprintf(aux_file_name, sizeof(aux_file_name), "%s-%s.auxmem.zstd", sn.name, "mach-virt.ram");
-            if (g_file_test(aux_file_name, G_FILE_TEST_IS_REGULAR)) {
-                QEMUFile *f = qemu_file_open_zstd_input(aux_file_name, errp);
-                if (!f) {
-                    error_setg(errp, "Could not open VM state file");
-                    return false;
-                }
+                    qemu_log("Verifying the memory...\n");
+                    uint8_t *incoming_page = g_new(uint8_t, qemu_target_page_size());
+                    // Read page by page and compare.
+                    for (uint64_t i = 0; i < main_ram->used_length / qemu_target_page_size(); ++i) {
+                        uint8_t *page = memory_addr_to_load + i * qemu_target_page_size();
+                        ssize_t len = qemu_get_buffer(f, incoming_page, qemu_target_page_size());
+                        if (len != qemu_target_page_size()) {
+                            error_setg(errp, "Could not read the memory completely");
+                            ret = -2;
+                            if (len < 0) {
+                                ret = len;
+                            }
 
-                qemu_log("Verifying the memory...\n");
-                uint8_t *incoming_page = g_new(uint8_t, qemu_target_page_size());
-                // Read page by page and compare.
-                for (uint64_t i = 0; i < main_ram->used_length / qemu_target_page_size(); ++i) {
-                    uint8_t *page = main_ram->host + i * qemu_target_page_size();
-                    ssize_t len = qemu_get_buffer(f, incoming_page, qemu_target_page_size());
-                    if (len != qemu_target_page_size()) {
-                        error_setg(errp, "Could not read the memory completely");
-                        ret = -2;
-                        if (len < 0) {
-                            ret = len;
+                            goto err_drain;
                         }
+                        if (memcmp(page, incoming_page, qemu_target_page_size()) != 0) {
+                            qemu_log("The memory is not verified at position: %lu\n", i);
+                            error_setg(errp, "The memory is not verified");
+                            ret = -2;
+                            goto err_drain;
+                        }
+                    }
 
-                        goto err_drain;
-                    }
-                    if (memcmp(page, incoming_page, qemu_target_page_size()) != 0) {
-                        qemu_log("The memory is not verified at position: %lu\n", i);
-                        error_setg(errp, "The memory is not verified");
-                        ret = -2;
-                        goto err_drain;
-                    }
+                    qemu_log("The memory is verified.\n");
                 }
-
-                qemu_log("The memory is verified.\n");
             }
         }
     }

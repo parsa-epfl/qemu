@@ -75,6 +75,14 @@ struct RAMBlock {
      * could not have been valid on the source.
      */
     ram_addr_t postcopy_length;
+
+    // loaded bitmap
+    char *on_demand_file_name;
+    GHashTable *on_demand_index;
+    int on_demand_uffd_fd;
+    uint64_t on_demand_uffd_ioctls;
+    uint8_t *on_demand_ref_host;
+    pthread_t on_demand_uffd_thread;
 };
 #endif
 #endif
