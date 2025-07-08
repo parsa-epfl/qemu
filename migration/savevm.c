@@ -3283,7 +3283,7 @@ static void *uffd_on_demand_thread(void *main_ram) {
 }
 
 bool load_snapshot(const char *name, const char *vmstate,
-                   bool has_devices, strList *devices, Error **errp)
+                   bool has_devices, strList *devices, bool on_demand, Error **errp)
 {
     BlockDriverState *bs_vm_state;
     QEMUSnapshotInfo sn;
@@ -3428,7 +3428,7 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
-    bool IS_ON_DEMAND_LOADING = is_incremental_base || is_incremental_delta;
+    bool IS_ON_DEMAND_LOADING = (is_incremental_base || is_incremental_delta) && on_demand;
     bool ON_DEMAND_CHECKING = false;
     RAMBlock *main_ram = get_main_memory();
     uint8_t *memory_addr_to_load = main_ram->host;
@@ -3805,7 +3805,7 @@ static void snapshot_load_job_bh(void *opaque)
     orig_vm_running = runstate_is_running();
     vm_stop(RUN_STATE_RESTORE_VM);
 
-    s->ret = load_snapshot(s->tag, s->vmstate, true, s->devices, s->errp);
+    s->ret = load_snapshot(s->tag, s->vmstate, true, s->devices, false, s->errp);
     if (s->ret && orig_vm_running) {
         vm_start();
     }

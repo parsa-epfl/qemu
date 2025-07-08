@@ -169,6 +169,7 @@ static const char *cpu_option;
 static const char *mem_path;
 static const char *incoming;
 static const char *loadvm;
+static bool loadvm_on_demand = false;
 static const char *accelerators;
 static bool have_custom_ram_size;
 static const char *ram_memdev_id;
@@ -2661,8 +2662,7 @@ void qmp_x_exit_preconfig(Error **errp)
         load_snapshot_external(loadvm, NULL, false, NULL, &error_fatal);
     else
 #endif
-        load_snapshot(loadvm, NULL, false, NULL, &error_fatal);
-
+        load_snapshot(loadvm, NULL, false, NULL, loadvm_on_demand, &error_fatal);
     }
     if (replay_mode != REPLAY_MODE_NONE) {
         replay_vmstate_init();
@@ -3217,7 +3217,26 @@ void qemu_init(int argc, char **argv)
                 add_device_config(DEV_DEBUGCON, optarg);
                 break;
             case QEMU_OPTION_loadvm:
-                loadvm = optarg;
+                // split optarg into filename and on-demand flag, by comma.
+                {
+                    char *comma = strchr(optarg, ',');
+                    if (comma) {
+                        // check whether after comma it is "on-demand"
+                        if (strcmp(comma + 1, "on-demand") != 0) {
+                            error_report("Invalid loadvm option: %s", optarg);
+                            exit(1);
+                        }
+                        *comma = '\0';
+                        loadvm_on_demand = true;
+                        loadvm = optarg;
+                        optarg = comma + 1;
+                        printf("Load VM on demand: %s\n", loadvm);
+                    } else {
+                        loadvm_on_demand = false;
+                        loadvm = optarg;
+                        printf("Load VM: %s\n", loadvm);
+                    }
+                }
                 break;
             case QEMU_OPTION_full_screen:
                 dpy.has_full_screen = true;

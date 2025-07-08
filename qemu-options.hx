@@ -4475,11 +4475,11 @@ SRST
 ERST
 
 DEF("loadvm", HAS_ARG, QEMU_OPTION_loadvm, \
-    "-loadvm [tag|id]\n" \
+    "-loadvm [tag|id][,on-demand]\n" \
     "                start right away with a saved state (loadvm in monitor)\n",
     QEMU_ARCH_ALL)
 SRST
-``-loadvm file``
+``-loadvm file[,on-demand]``
     Start right away with a saved state (``loadvm`` in monitor)
 ERST
 
