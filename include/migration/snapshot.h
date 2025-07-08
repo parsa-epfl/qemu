@@ -39,7 +39,7 @@ bool save_snapshot(const char *name, bool overwrite,
  * @vmstate: blockdev node name to load VM state from
  * @has_devices: whether to use explicit device list
  * @devices: explicit device list to snapshot
- & @on_demand: whether to load the memory from the snapshot on demand
+ & @on_demand: whether to load the memory from the snapshot on demand (0: no, 1: yes, 2: yes and check)
  * @errp: pointer to error object
  * On success, return %true.
  * On failure, store an error through @errp and return %false.
@@ -47,7 +47,7 @@ bool save_snapshot(const char *name, bool overwrite,
 bool load_snapshot(const char *name,
                    const char *vmstate,
                    bool has_devices, strList *devices,
-                   bool on_demand,
+                   int on_demand,
                    Error **errp);
 
 /**

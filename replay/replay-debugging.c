@@ -195,7 +195,7 @@ static void replay_seek(int64_t icount, QEMUTimerCB callback, Error **errp)
         if (icount < replay_get_current_icount()
             || replay_get_current_icount() < snapshot_icount) {
             vm_stop(RUN_STATE_RESTORE_VM);
-            load_snapshot(snapshot, NULL, false, NULL, false, errp);
+            load_snapshot(snapshot, NULL, false, NULL, 0, errp);
         }
         g_free(snapshot);
     }

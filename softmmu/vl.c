@@ -169,7 +169,7 @@ static const char *cpu_option;
 static const char *mem_path;
 static const char *incoming;
 static const char *loadvm;
-static bool loadvm_on_demand = false;
+static int loadvm_on_demand = 0;
 static const char *accelerators;
 static bool have_custom_ram_size;
 static const char *ram_memdev_id;
@@ -3222,17 +3222,20 @@ void qemu_init(int argc, char **argv)
                     char *comma = strchr(optarg, ',');
                     if (comma) {
                         // check whether after comma it is "on-demand"
-                        if (strcmp(comma + 1, "on-demand") != 0) {
+                        if (strcmp(comma + 1, "on-demand") == 0){
+                            loadvm_on_demand = 1;
+                        } else if (strcmp(comma + 1, "on-demand-check") == 0) {
+                            loadvm_on_demand = 2;
+                        } else {
                             error_report("Invalid loadvm option: %s", optarg);
                             exit(1);
                         }
                         *comma = '\0';
-                        loadvm_on_demand = true;
                         loadvm = optarg;
                         optarg = comma + 1;
                         printf("Load VM on demand: %s\n", loadvm);
                     } else {
-                        loadvm_on_demand = false;
+                        loadvm_on_demand = 0;
                         loadvm = optarg;
                         printf("Load VM: %s\n", loadvm);
                     }

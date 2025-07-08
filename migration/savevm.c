@@ -3283,7 +3283,7 @@ static void *uffd_on_demand_thread(void *main_ram) {
 }
 
 bool load_snapshot(const char *name, const char *vmstate,
-                   bool has_devices, strList *devices, bool on_demand, Error **errp)
+                   bool has_devices, strList *devices, int on_demand, Error **errp)
 {
     BlockDriverState *bs_vm_state;
     QEMUSnapshotInfo sn;
@@ -3429,7 +3429,7 @@ bool load_snapshot(const char *name, const char *vmstate,
     }
 
     bool IS_ON_DEMAND_LOADING = (is_incremental_base || is_incremental_delta) && on_demand;
-    bool ON_DEMAND_CHECKING = false;
+    bool ON_DEMAND_CHECKING = IS_ON_DEMAND_LOADING && on_demand == 2;
     RAMBlock *main_ram = get_main_memory();
     uint8_t *memory_addr_to_load = main_ram->host;
 
@@ -3470,6 +3470,31 @@ bool load_snapshot(const char *name, const char *vmstate,
             strcpy(main_ram->on_demand_file_name, name);
         }
 
+        {
+            // make sure the memory size is matched.
+            char base_mem_file[300];
+            snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", main_ram->on_demand_file_name);
+            FILE *base_mem_file_fd = fopen(base_mem_file, "rb");
+            if (!base_mem_file_fd) {
+                error_setg(errp, "Could not open the base memory file");
+                ret = -2;
+                goto err_drain;
+            }
+
+            struct stat base_state;
+
+            stat(base_mem_file, &base_state);
+
+            if (base_state.st_size != main_ram->used_length) {
+                error_setg(errp, "The base memory file size does not match the RAM size");
+                ret = -2;
+                fclose(base_mem_file_fd);
+                goto err_drain;
+            }
+
+            fclose(base_mem_file_fd);
+        }
+    
         main_ram->on_demand_uffd_fd = uffd_create_fd(0, false);
         assert(main_ram->on_demand_uffd_fd >= 0); // uffd_create_fd() should not fail.
 
@@ -3805,7 +3830,7 @@ static void snapshot_load_job_bh(void *opaque)
     orig_vm_running = runstate_is_running();
     vm_stop(RUN_STATE_RESTORE_VM);
 
-    s->ret = load_snapshot(s->tag, s->vmstate, true, s->devices, false, s->errp);
+    s->ret = load_snapshot(s->tag, s->vmstate, true, s->devices, 0, s->errp);
     if (s->ret && orig_vm_running) {
         vm_start();
     }
