@@ -46,4 +46,4 @@
 [submodule "libqflex"]
 	path = middleware
 	url = https://github.com/parsa-epfl/libqflex.git
-	branch = qemu/8.1
+	branch = fix/default_frequency
