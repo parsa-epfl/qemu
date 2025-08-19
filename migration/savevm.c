@@ -3494,6 +3494,9 @@ bool load_snapshot(const char *name, const char *vmstate,
 
             fclose(base_mem_file_fd);
         }
+
+        // force the OS to trigger page fault for this range of memory.
+        madvise(main_ram->host, main_ram->used_length, MADV_DONTNEED);
     
         main_ram->on_demand_uffd_fd = uffd_create_fd(0, false);
         assert(main_ram->on_demand_uffd_fd >= 0); // uffd_create_fd() should not fail.
