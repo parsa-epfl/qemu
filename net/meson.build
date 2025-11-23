@@ -63,3 +63,9 @@ vmnet_files = files(
 )
 system_ss.add(when: vmnet, if_true: vmnet_files)
 subdir('can')
+
+system_ss.add(files(
+  'pdes-communicator.c',
+  'pdes-engine.c',
+  'pdes-netdev.c',
+))

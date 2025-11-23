@@ -276,6 +276,21 @@
     '*mcast':     'str',
     '*localaddr': 'str',
     '*udp':       'str' } }
+##
+# @NetdevPdesOptions:
+#
+# PDES network backend
+#
+# @shm-send: name of the shared memory region for sending
+#
+# @shm-recv: name of the shared memory region for receiving
+#
+# Since: 1.2
+##
+{ 'struct': 'NetdevPdesOptions',
+  'data': {
+    'shm-send': 'str',
+    'shm-recv': 'str' } }
 
 ##
 # @NetdevL2TPv3Options:
@@ -648,7 +663,7 @@
 { 'enum': 'NetClientDriver',
   'data': [ 'none', 'nic', 'user', 'tap', 'l2tpv3', 'socket', 'stream',
             'dgram', 'vde', 'bridge', 'hubport', 'netmap', 'vhost-user',
-            'vhost-vdpa',
+            'vhost-vdpa', 'pdes',
             { 'name': 'vmnet-host', 'if': 'CONFIG_VMNET' },
             { 'name': 'vmnet-shared', 'if': 'CONFIG_VMNET' },
             { 'name': 'vmnet-bridged', 'if': 'CONFIG_VMNET' }] }
@@ -669,6 +684,7 @@
   'discriminator': 'type',
   'data': {
     'nic':      'NetLegacyNicOptions',
+    'pdes':     'NetdevPdesOptions' ,
     'user':     'NetdevUserOptions',
     'tap':      'NetdevTapOptions',
     'l2tpv3':   'NetdevL2TPv3Options',
