@@ -1188,6 +1188,7 @@ void show_netdevs(void)
         "dgram",
         "hubport",
         "tap",
+        "pdes",
 #ifdef CONFIG_SLIRP
         "user",
 #endif
