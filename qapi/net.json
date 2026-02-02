@@ -290,7 +290,10 @@
 { 'struct': 'NetdevPdesOptions',
   'data': {
     'shm-send': 'str',
-    'shm-recv': 'str' } }
+    'shm-recv': 'str',
+    'latencyns': 'uint64',
+    'sync': 'bool'
+    } }
 
 ##
 # @NetdevL2TPv3Options:

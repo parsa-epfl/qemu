@@ -4,193 +4,194 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include "qemu/timer.h"
 
-#define MAX_MSG_SIZE 2048
-
-typedef struct {
-    uint64_t ts_ns;       // timestamp in nanoseconds
-    uint32_t len;
-    uint8_t data[MAX_MSG_SIZE];
-    uint8_t type;         // Add this: 0 = normal, 1 = sync TODO define these properly
-} Message;
 
 typedef struct {
     volatile uint32_t write_idx;
     volatile uint32_t read_idx;
-    Message messages[1024];
+    Message           messages[RING_SIZE];
 } ShmRing;
 
+
 struct PDESCommunicator {
-    int fd;
-    ShmRing *ring;
-    size_t size;
-    QEMUTimer *timer;  // TODO this needs to move to PDES Engine
-    bool synced;
-    bool has_connection; // TODO this is temp fix since we don't have any orchestration yet
+    int       fd_send;
+    int       fd_recv;
+    ShmRing  *ring_send;
+    ShmRing  *ring_recv;
+    size_t    size;
 };
 
-static void pdes_timer_cb(void *opaque) {
-    PDESCommunicator *comm = (PDESCommunicator *)opaque;
 
-    // We have not yet established connection, just reschedule
-    
-    // Pause all vCPUs
-    printf("============== PDES Comm: Pausing all vCPUs for synchronization.==============\n");
-    pause_all_vcpus();
-    printf("============== PDES Comm: vCPUs paused.==============\n");
-    comm->synced = false;
 
-    // We have sent all our messages so need to let others know
-    printf("============== PDES Comm: Sending sync message and waiting for sync from others.==============\n");
-    pdes_comm_send_sync(comm);
-    printf("============== PDES Comm: Sync message sent, now waiting for others.==============\n");
-    
-    while (comm->synced == false) {
-        printf("============== PDES Comm: Waiting for sync from others.==============\n");  
-        usleep(100);  // Sleep for 100 microseconds
-    }
-    // Resume all vCPUs
-    printf("============== PDES Comm: Resuming all vCPUs after synchronization.==============\n");
-    resume_all_vcpus();
-    printf("============== PDES Comm: vCPUs resumed.==============\n");
-    
-    
-    // Reschedule for next interval (e.g., 1ms later)
-    // TODO change this hardcoded value to a parameter for latency
-    timer_mod(comm->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
-}
+/* Helper to create/open and mmap a ring */
+static int pdes_comm_init_ring(const char *shm_name,
+                               int *fd_out,
+                               ShmRing **ring_out,
+                               size_t shm_size)
+{
+    int fd;
+    bool is_creator;
+    ShmRing *ring;
 
-PDESCommunicator *pdes_comm_create(const char *shm_name) {
-    PDESCommunicator *comm = g_new0(PDESCommunicator, 1);
-    size_t shm_size = sizeof(ShmRing);
-    
-    comm->fd = shm_open(shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);   
-    bool is_creator = (comm->fd >= 0);
-    
+    fd = shm_open(shm_name, O_CREAT | O_EXCL | O_RDWR, 0666);
+    is_creator = (fd >= 0);
+
     if (!is_creator) {
-        // Already exists, just open it
-        comm->fd = shm_open(shm_name, O_RDWR, 0666);
-        if (comm->fd < 0) {
-            g_free(comm);
-            return NULL;
+        /* Already exists, just open it */
+        fd = shm_open(shm_name, O_RDWR, 0666);
+        if (fd < 0) {
+            return -1;
         }
     } else {
-        // We created it, so initialize
-        if (ftruncate(comm->fd, shm_size) < 0) {
+        /* We created it, so size it */
+        if (ftruncate(fd, shm_size) < 0) {
             shm_unlink(shm_name);
-            close(comm->fd);
-            g_free(comm);
-            return NULL;
+            close(fd);
+            return -1;
         }
     }
-    
-    comm->ring = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, comm->fd, 0);
-    if (comm->ring == MAP_FAILED) {
-        close(comm->fd);
-        if (is_creator) shm_unlink(shm_name);
-        g_free(comm);
-        return NULL;
+
+    ring = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ring == MAP_FAILED) {
+        if (is_creator) {
+            shm_unlink(shm_name);
+        }
+        close(fd);
+        return -1;
     }
-    
+
     if (is_creator) {
-        // Initialize the ring buffer
-        memset(comm->ring, 0, shm_size);
-    } else {
-        // Wait for initialization by creator
-        while (comm->ring->write_idx == 0 && comm->ring->read_idx == 0) {
-            usleep(1000);
-        }
-    }
-    
-    comm->ring = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, comm->fd, 0);
-    comm->size = shm_size;
+        /* Initialize the ring buffer */
+        memset(ring, 0, shm_size);
+    } 
+    // else {
+    //     /* Wait for initialization by creator */
+    //     while (ring->write_idx == 0 && ring->read_idx == 0) {
+    //         usleep(1000);
+    //     }
+    // }
+    // TODO see if you need to add the above back in
 
-    comm->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, pdes_timer_cb, comm);
-    printf("==============PDES Comm: Created communicator with shared memory '%s' and sending sync message.==============\n", shm_name);
-    pdes_comm_send_sync(comm);
-    comm->synced = true;
-    comm->has_connection = false;
-    // TODO change this hardcoded value to a parameter for latency
-    timer_mod(comm->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
-
-    
-    return comm;
-}
-
-void pdes_comm_destroy(PDESCommunicator *comm) {
-    if (comm->ring) {
-        munmap(comm->ring, comm->size);
-    }
-    if (comm->fd >= 0) {
-        close(comm->fd);
-    }
-    timer_free(comm->timer);
-    g_free(comm);
-}
-
-int pdes_comm_send(PDESCommunicator *comm, const uint8_t *data, size_t len) {
-    if (len > MAX_MSG_SIZE) return -1;
-    
-    uint32_t next_write = (comm->ring->write_idx + 1) % 1024;
-    if (next_write == comm->ring->read_idx) return -EAGAIN;
-    
-    Message *msg = &comm->ring->messages[comm->ring->write_idx];
-    msg->len = len;
-
-    // Dummy latency
-    uint64_t latency = 1500;
-    msg->ts_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + latency;
-    msg->type = 0; // normal message
-
-    memcpy(msg->data, data, len);
-    qatomic_set_mb(&comm->ring->write_idx, next_write);
-    
-    return len;
-}
-
-int pdes_comm_send_sync(PDESCommunicator *comm) {
-    uint32_t next_write = (comm->ring->write_idx + 1) % 1024;
-    if (next_write == comm->ring->read_idx) return -EAGAIN;
-    
-    Message *msg = &comm->ring->messages[comm->ring->write_idx];
-    msg->len = 0;
-    msg->type = 1;  // Sync message
-    msg->ts_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);  // No latency for sync
-    qatomic_set_mb(&comm->ring->write_idx, next_write);
-    
-    printf("==============PDES Comm sent sync message 3.==============\n");
+    *fd_out   = fd;
+    *ring_out = ring;
     return 0;
 }
 
-int pdes_comm_recv(PDESCommunicator *comm, uint8_t *buf, size_t buf_len) {
-    if (comm->ring->read_idx == comm->ring->write_idx) return 0;
-    
-    Message *msg = &comm->ring->messages[comm->ring->read_idx];
-    size_t len = msg->len < buf_len ? msg->len : buf_len;
-    memcpy(buf, msg->data, len);
-    
-    if (msg->type == 1) {
-        comm->synced = true;  // Set synced flag when sync received
-        qatomic_set_mb(&comm->ring->read_idx, (comm->ring->read_idx + 1) % 1024);
-        printf("PDES Comm received sync message.\n");
-        return -1;  // Return special value to indicate sync message
+
+PDESCommunicator *pdes_comm_create(const char *shm_send_name,
+                                   const char *shm_recv_name)
+{
+    PDESCommunicator *comm;
+    size_t shm_size = sizeof(ShmRing);
+
+    comm = g_new0(PDESCommunicator, 1);
+    if (!comm) {
+        return NULL;
     }
 
-    if (comm->has_connection == false){
-        printf("PDES Comm: Connection established.\n");
-        comm->has_connection = true;
+    comm->size = shm_size;
+
+    if (pdes_comm_init_ring(shm_send_name, &comm->fd_send,
+                            &comm->ring_send, shm_size) < 0) {
+        g_free(comm);
+        return NULL;
     }
 
-    qatomic_set_mb(&comm->ring->read_idx, (comm->ring->read_idx + 1) % 1024);
-    
-    if (len > 0){
-        uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        // Printf message, length, when it was suppoused to be received and current time
-        printf("PDES Comm received message of length %zu, ts_ns: %lu, now: %lu\n", len, msg->ts_ns, now);
-        if (now > msg->ts_ns) {
-            printf("!!!!!!!!!!!!!!!!!!!Warning: causality violation detected!!!!!!!!!!!!!!!!!!!\n");
-        }
+    if (pdes_comm_init_ring(shm_recv_name, &comm->fd_recv,
+                            &comm->ring_recv, shm_size) < 0) {
+        munmap(comm->ring_send, shm_size);
+        close(comm->fd_send);
+        g_free(comm);
+        return NULL;
     }
-    return len;
+
+    return comm;
+}
+
+
+Message create_message(const uint8_t *data, size_t len, uint8_t type, uint64_t ts_ns)
+{
+    Message msg;
+    msg.ts_ns = ts_ns;
+    msg.len   = (uint32_t)len;
+    msg.type  = type;
+    memcpy(msg.data, data, len);
+    return msg;
+}
+
+
+void pdes_comm_destroy(PDESCommunicator *comm)
+{
+    if (!comm) {
+        return;
+    }
+
+    if (comm->ring_send) {
+        munmap(comm->ring_send, comm->size);
+    }
+    if (comm->ring_recv) {
+        munmap(comm->ring_recv, comm->size);
+    }
+    if (comm->fd_send >= 0) {
+        close(comm->fd_send);
+    }
+    if (comm->fd_recv >= 0) {
+        close(comm->fd_recv);
+    }
+    g_free(comm);
+}
+
+
+int pdes_comm_send(PDESCommunicator *comm, Message *msg)
+{
+
+    ShmRing *ring;
+    uint32_t next_write;
+
+    if (!comm || !comm->ring_send || !msg) {
+        printf("PDES Comm invalid parameters in send\n");
+        return -EINVAL;
+    }
+
+    ring = comm->ring_send;
+    next_write = (ring->write_idx + 1) % RING_SIZE;
+    while (next_write == ring->read_idx) {
+        printf("============================PDES Comm waiting to send message, ring buffer full============================\n");
+        // TODO check if we can make this better
+        // printf("PDES Comm ring buffer full, cannot send message now.\n");
+        // usleep(1000);  /* Wait for space to become available */
+        // return -EAGAIN;
+    }
+
+    // TODO check for race conditions
+    /* Copy the message into the ring */
+    ring->messages[ring->write_idx] = *msg;
+
+    qatomic_set_mb(&ring->write_idx, next_write);
+
+    printf("=========================== PDES Engine: Sent message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    return 0;
+}
+
+
+int pdes_comm_recv(PDESCommunicator *comm, Message *msg){
+    ShmRing *ring;
+    if (!comm || !comm->ring_recv || !msg) {
+        return -EINVAL;
+    }
+
+    ring = comm->ring_recv;
+    if (ring->read_idx == ring->write_idx) {
+        return NO_MESSAGE;  /* No message available */
+    }
+
+    /* Copy the message from the ring */
+    *msg = ring->messages[ring->read_idx];
+
+    qatomic_set_mb(&ring->read_idx, (ring->read_idx + 1) % RING_SIZE);
+
+    printf("=========================== PDES Engine: Received message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    return msg->len;
 }
