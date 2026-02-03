@@ -37,6 +37,7 @@
 #include "migration/register.h"
 #include "migration/global_state.h"
 #include "migration/channel-block.h"
+#include "qemu/typedefs.h"
 #include "ram.h"
 #include "qemu-file.h"
 #include "savevm.h"
@@ -59,6 +60,7 @@
 #include "block/snapshot.h"
 #include "qemu/cutils.h"
 #include "io/channel-buffer.h"
+#include "io/channel-command.h"
 #include "io/channel-file.h"
 #include "sysemu/replay.h"
 #include "sysemu/runstate.h"
@@ -71,11 +73,18 @@
 #include "yank_functions.h"
 #include "sysemu/qtest.h"
 #include "options.h"
-#include "io/channel-command.h"
 
-#include "external_snapshot_util.h"
+#include "migration/external_snapshot_util.h"
+#include <fcntl.h>
+#include <sys/mman.h>
+
+void
+libqflex_save_ckpt(char const * const dirname); // defined in libqflex.c
 
 const unsigned int postcopy_ram_discard_version;
+
+// Defined in vl.c.
+extern bool incremental_memory_snapshot;
 
 /* Subcommands for QEMU_VM_COMMAND */
 enum qemu_vm_cmd {
@@ -2922,8 +2931,213 @@ int qemu_loadvm_approve_switchover(void)
     return migrate_send_rp_switchover_ack(mis);
 }
 
+
+
+static char *get_xdelta3(Error **errp)
+{
+    char *xdelta3 = g_find_program_in_path("xdelta3");
+    if (!xdelta3)
+        error_setg(errp, "xdelta3 not found in PATH");
+
+    return xdelta3;
+}
+
+static void pause_snapshotting_main_memory(bool stop) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        if (strcmp(ram->idstr, "mach-virt.ram")) {
+            continue;
+        }
+        if (stop) {
+            qemu_ram_unset_migratable(ram);
+        } else {
+            qemu_ram_set_migratable(ram);
+        }
+    }
+}
+
+static struct RAMBlock *get_main_memory(void) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        int compare = strcmp(ram->idstr, "mach-virt.ram");
+        // printf("RAMBlock %s\n", ram->idstr);
+        if (compare) {
+            continue;
+        }
+        return ram;
+    }
+    assert(false);
+}
+
+/*
+ * Sparse base image index format:
+ * - For VMs with <= 16TB RAM: use 32-bit page indices (page number, not byte offset)
+ * - For VMs with > 16TB RAM: use 64-bit page indices
+ *
+ * Using page indices instead of byte offsets allows 32-bit to address up to:
+ * 2^32 pages * 4KB = 16TB of memory
+ */
+#define SPARSE_INDEX_MAX_32BIT_PAGES (1ULL << 32)
+
+/**
+ * Load base memory from sparse format (base.data + base.index).
+ * If sparse format doesn't exist, falls back to loading the complete base file.
+ *
+ * @param base_name: The snapshot name (used to construct file paths)
+ * @param memory_addr: Where to load the memory
+ * @param memory_size: Size of the memory region
+ * @param errp: Error pointer
+ * @return: 0 on success, negative on error
+ */
+static int load_base_memory_sparse(const char *base_name, uint8_t *memory_addr,
+                                   uint64_t memory_size, Error **errp)
+{
+    char data_file_name[350];
+    char index_file_name[350];
+    char base_file_name[350];
+
+    snprintf(data_file_name, sizeof(data_file_name), "%s.mem/base.data", base_name);
+    snprintf(index_file_name, sizeof(index_file_name), "%s.mem/base.index", base_name);
+    snprintf(base_file_name, sizeof(base_file_name), "%s.mem/base", base_name);
+
+    // Check if sparse format exists
+    if (g_file_test(data_file_name, G_FILE_TEST_IS_REGULAR) &&
+        g_file_test(index_file_name, G_FILE_TEST_IS_REGULAR)) {
+
+        // Load from sparse format
+        FILE *data_file = fopen(data_file_name, "rb");
+        if (!data_file) {
+            error_setg(errp, "Could not open base.data file");
+            return -1;
+        }
+
+        FILE *index_file = fopen(index_file_name, "rb");
+        if (!index_file) {
+            error_setg(errp, "Could not open base.index file");
+            fclose(data_file);
+            return -1;
+        }
+
+        // Zero-initialize the memory lazily using madvise
+        // MADV_DONTNEED tells the kernel to zero-fill pages on first access,
+        // which is much more efficient than explicit memset for large regions
+        madvise(memory_addr, memory_size, MADV_DONTNEED);
+
+        uint64_t target_page_size = qemu_target_page_size();
+        uint64_t page_count = memory_size / target_page_size;
+        bool use_32bit_index = (page_count <= SPARSE_INDEX_MAX_32BIT_PAGES);
+        uint64_t pages_loaded = 0;
+
+        // Read each entry from the index and load the corresponding page
+        while (true) {
+            uint64_t page_index;
+            if (use_32bit_index) {
+                uint32_t idx32;
+                if (fread(&idx32, sizeof(uint32_t), 1, index_file) != 1) break;
+                page_index = idx32;
+            } else {
+                if (fread(&page_index, sizeof(uint64_t), 1, index_file) != 1) break;
+            }
+
+            uint64_t page_offset = page_index * target_page_size;
+            if (page_offset + target_page_size > memory_size) {
+                error_setg(errp, "Invalid page index in base.index: %lu", page_index);
+                fclose(data_file);
+                fclose(index_file);
+                return -1;
+            }
+
+            size_t read_size = fread(memory_addr + page_offset,
+                                    target_page_size, 1, data_file);
+            if (read_size != 1) {
+                error_setg(errp, "Failed to read page data from base.data");
+                fclose(data_file);
+                fclose(index_file);
+                return -1;
+            }
+            pages_loaded++;
+        }
+
+        fclose(data_file);
+        fclose(index_file);
+
+        printf("Sparse base image loaded: %lu non-zero pages\n", pages_loaded);
+
+        // If the complete base file also exists, verify the loaded data
+        if (g_file_test(base_file_name, G_FILE_TEST_IS_REGULAR)) {
+            QEMUFile *f = qemu_file_open_input(base_file_name, errp);
+            if (f) {
+                uint8_t *verify_buffer = g_malloc(target_page_size);
+                uint64_t page_count = memory_size / target_page_size;
+                bool mismatch_found = false;
+
+                for (uint64_t i = 0; i < page_count && !mismatch_found; i++) {
+                    ssize_t len = qemu_get_buffer(f, verify_buffer, target_page_size);
+                    if (len != target_page_size) {
+                        printf("Warning: Could not read page %lu from base file for verification\n", i);
+                        break;
+                    }
+
+                    if (memcmp(memory_addr + (i * target_page_size), verify_buffer, target_page_size) != 0) {
+                        printf("ERROR: Mismatch at page %lu (offset %lu) between sparse and complete base\n",
+                               i, i * target_page_size);
+                        mismatch_found = true;
+                    }
+                }
+
+                g_free(verify_buffer);
+                qemu_fclose(f);
+
+                if (!mismatch_found) {
+                    printf("Verification passed: sparse format matches complete base file\n");
+                } else {
+                    error_setg(errp, "Sparse format verification failed");
+                    return -1;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    // Fall back to loading complete base file
+    if (g_file_test(base_file_name, G_FILE_TEST_IS_REGULAR)) {
+        QEMUFile *f = qemu_file_open_input(base_file_name, errp);
+        if (!f) {
+            error_setg(errp, "Could not open base memory file");
+            return -1;
+        }
+
+        ssize_t len = qemu_get_buffer(f, memory_addr, memory_size);
+        qemu_fclose(f);
+
+        if (len != memory_size) {
+            error_setg(errp, "Could not read the memory completely (got %zd, expected %lu)",
+                       len, memory_size);
+            return len < 0 ? len : -1;
+        }
+
+        printf("Complete base image loaded: %lu bytes\n", memory_size);
+        return 0;
+    }
+
+    error_setg(errp, "No base memory file found (neither sparse nor complete)");
+    return -1;
+}
+
+// static GHashTable *page_locations = NULL;
+static struct {
+    GHashTable *page_location;
+    uint64_t index;
+    char base_name[256];
+} incremental_snapshot_context = {
+    .page_location = NULL,
+    .index = 0,
+    .base_name = {0},
+};
+
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, Error **errp)
+                  bool has_devices, strList *devices, SnapshotFormat format, Error **errp)
 {
     BlockDriverState *bs;
     QEMUSnapshotInfo sn1, *sn = &sn1;
@@ -2977,7 +3191,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     }
     aio_context = bdrv_get_aio_context(bs);
 
-    saved_vm_running = runstate_is_running();
+    saved_vm_running = runstate_is_running() || runstate_check(RUN_STATE_SAVE_VM);;
 
     global_state_store();
     vm_stop(RUN_STATE_SAVE_VM);
@@ -3005,21 +3219,255 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         pstrcpy(sn->name, sizeof(sn->name), autoname);
     }
 
+    switch (format) {
+        case SNAPSHOT_FORMAT_INTERNAL_RAW: {
+            f = qemu_fopen_bdrv(bs, 1);
+            break;
+        }
+
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA:
+        case SNAPSHOT_FORMAT_EXTERNAL_ZSTD: {
+            char snapshot_file_name[299];
+            if (format == SNAPSHOT_FORMAT_EXTERNAL_ZSTD) {
+                snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.zstd", sn->name);
+            } else {
+                snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.state.zstd", sn->name);
+            }
+
+            f = qemu_file_open_zstd_output(snapshot_file_name, errp);
+            if (!f) {
+                error_setg(errp, "Could not create snapshot file");
+                goto the_end;
+            }
+
+            break;
+        }
+
+        default: {
+            error_setg(errp, "Unknown snapshot format");
+            goto the_end;
+        }
+
+    }
+
     /* save the VM state */
-    f = qemu_fopen_bdrv(bs, 1);
     if (!f) {
         error_setg(errp, "Could not open VM state file");
         goto the_end;
     }
+
+    struct DirtyBitmapSnapshot *dirty_bitmap = NULL;
+
+    // alright, if the format of the snapshot is incremental, we need to make the march-virt.ram not migratable.
+    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE || format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+        pause_snapshotting_main_memory(true);
+        dirty_bitmap = memory_region_snapshot_and_clear_dirty(get_main_memory()->mr, 0, get_main_memory()->used_length, DIRTY_MEMORY_MIGRATION);
+    }
+
     ret = qemu_savevm_state(f, errp);
     vm_state_size = qemu_file_transferred_noflush(f);
     ret2 = qemu_fclose(f);
+
+    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE || format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+        pause_snapshotting_main_memory(false);
+    }
+
     if (ret < 0) {
         goto the_end;
     }
     if (ret2 < 0) {
         ret = ret2;
         goto the_end;
+    }
+
+    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE || format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+        struct RAMBlock *main_ram = get_main_memory();
+        if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE) {
+            char dump_file_name[301];
+            snprintf(dump_file_name, sizeof(dump_file_name), "%s.mem", sn->name);
+            // create a folder for the snapshot.
+            if (mkdir(dump_file_name, 0755) < 0 && errno != EEXIST) {
+                error_setg(errp, "Could not create snapshot folder");
+                goto the_end;
+            }
+
+            // Create the sparse base image (base.data + base.index)
+            // base.data contains only non-zero pages
+            // base.index contains the offset (in page units) of each non-zero page
+            uint64_t time_start = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+            char data_file_name[310];
+            char index_file_name[310];
+            snprintf(data_file_name, sizeof(data_file_name), "%s.mem/base.data", sn->name);
+            snprintf(index_file_name, sizeof(index_file_name), "%s.mem/base.index", sn->name);
+
+            FILE *data_file = fopen(data_file_name, "wb");
+            if (!data_file) {
+                error_setg(errp, "Could not open base.data file");
+                goto the_end;
+            }
+
+            FILE *index_file = fopen(index_file_name, "wb");
+            if (!index_file) {
+                error_setg(errp, "Could not open base.index file");
+                fclose(data_file);
+                goto the_end;
+            }
+
+            // Write non-zero pages and their indices
+            uint64_t target_page_size = qemu_target_page_size();
+            uint64_t page_count = main_ram->used_length / target_page_size;
+            bool use_32bit_index = (page_count <= SPARSE_INDEX_MAX_32BIT_PAGES);
+            uint64_t non_zero_pages = 0;
+            uint64_t zero_pages = 0;
+
+            for (uint64_t i = 0; i < page_count; i++) {
+                const uint8_t *page = main_ram->host + (i * target_page_size);
+                if (!buffer_is_zero(page, target_page_size)) {
+                    // Write the page index (not byte offset)
+                    if (use_32bit_index) {
+                        uint32_t idx32 = (uint32_t)i;
+                        fwrite(&idx32, sizeof(uint32_t), 1, index_file);
+                    } else {
+                        fwrite(&i, sizeof(uint64_t), 1, index_file);
+                    }
+                    // Write the page data
+                    fwrite(page, target_page_size, 1, data_file);
+                    non_zero_pages++;
+                } else {
+                    zero_pages++;
+                }
+            }
+
+            fflush(data_file);
+            fflush(index_file);
+            fclose(data_file);
+            fclose(index_file);
+
+            uint64_t delta_ns = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - time_start;
+            printf("Sparse base image creation time: %.2f seconds\n", delta_ns / 1e9);
+            printf("Sparse base image saved: %lu non-zero pages, %lu zero pages skipped (%.2f%% saved), using %s index\n",
+                   non_zero_pages, zero_pages,
+                   page_count > 0 ? (100.0 * zero_pages / page_count) : 0.0,
+                   use_32bit_index ? "32-bit" : "64-bit");
+
+            // Also dump the complete memory for backward compatibility and testing
+            const bool ALSO_DUMP_COMPLETE_BASE = false;
+            if (ALSO_DUMP_COMPLETE_BASE) {
+                snprintf(dump_file_name, sizeof(dump_file_name), "%s.mem/base", sn->name);
+
+                uint64_t time_start = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+
+                QEMUFile *f = qemu_file_open_output(dump_file_name, errp);
+                if (!f) {
+                    error_setg(errp, "Could not open base file for backward compatibility");
+                    goto the_end;
+                }
+
+                // Write the RAMBlock completely
+                qemu_put_buffer(f, main_ram->host, main_ram->used_length);
+
+                ret2 = qemu_fclose(f);
+                if (ret2 < 0) {
+                    error_setg(errp, "Could not close base file");
+                    goto the_end;
+                }
+
+                uint64_t delta_ns = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - time_start;
+                printf("Complete base image creation time: %.2f seconds\n", delta_ns / 1e9);
+            }
+
+            // Clear the dirty bitmap.
+            g_free(dirty_bitmap);
+
+            if (incremental_snapshot_context.page_location != NULL) {
+                g_hash_table_destroy(incremental_snapshot_context.page_location);
+            }
+
+            // create a new page locations table.
+            incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+            strcpy(incremental_snapshot_context.base_name, sn->name);
+            incremental_snapshot_context.index = 0;
+        } else {
+            assert(incremental_snapshot_context.page_location != NULL); // a prior complete snapshot should have been taken.
+
+            char bin_file_name[305];
+            snprintf(bin_file_name, sizeof(bin_file_name), "%s.mem/%lu", incremental_snapshot_context.base_name, incremental_snapshot_context.index);
+
+            FILE *bin_file = fopen(bin_file_name, "wb");
+            if (!bin_file) {
+                error_setg(errp, "Could not open bin file");
+                goto the_end;
+            }
+
+            // dump the dirty bitmap to a file.
+            uint64_t target_page_size = qemu_target_page_size();
+            assert(dirty_bitmap->start % target_page_size == 0); // they should be page aligned.
+            assert(dirty_bitmap->end % target_page_size == 0); // they should be page aligned.
+            uint64_t page_count = (dirty_bitmap->end - dirty_bitmap->start) / target_page_size; // 4K page size. FIXME: Make it flexible.
+            uint64_t page_idx = 0;
+            for (uint64_t i = 0; i < page_count; ++i) {
+                if (test_bit(i, dirty_bitmap->dirty)) {
+                    fwrite(main_ram->host + (dirty_bitmap->start + i * target_page_size), target_page_size, 1, bin_file);
+
+                    struct page_location_pair_t *info = g_new0(struct page_location_pair_t, 1);
+                    info->which_file = incremental_snapshot_context.index;
+                    info->file_offset = page_idx * target_page_size;
+
+                    // record the page location.
+                    g_hash_table_insert(
+                        incremental_snapshot_context.page_location,
+                        GINT_TO_POINTER(dirty_bitmap->start + i * target_page_size),
+                        info
+                    );
+
+                    page_idx++;
+                }
+            }
+
+            fflush(bin_file);
+            fclose(bin_file);
+            g_free(dirty_bitmap);
+
+            // Save the page locations to a file.
+            char page_location_file_name[305];
+            snprintf(page_location_file_name, sizeof(page_location_file_name), "%s.loc", name);
+            FILE *page_location_file = fopen(page_location_file_name, "wb");
+            if (!page_location_file) {
+                error_setg(errp, "Could not open page location file");
+                goto the_end;
+            }
+
+            serialize_incremental_loc_file(
+                page_location_file,
+                incremental_snapshot_context.base_name,
+                incremental_snapshot_context.index,
+                incremental_snapshot_context.page_location
+            );
+
+            const bool ALSO_DUMP_COMPLETE_MAIN_MEMORY = false;
+            if (ALSO_DUMP_COMPLETE_MAIN_MEMORY) {
+                char dump_file_name[800];
+                snprintf(dump_file_name, sizeof(dump_file_name), "%s-%s.auxmem.zstd", sn->name, main_ram->idstr);
+
+                QEMUFile *f = qemu_file_open_zstd_output(dump_file_name, errp);
+                if (!f) {
+                    error_setg(errp, "Could not open zstd file");
+                    goto the_end;
+                }
+
+                // Write the RAMBlock to the zstd file.
+                qemu_put_buffer(f, main_ram->host, main_ram->used_length);
+
+                ret2 = qemu_fclose(f);
+                if (ret2 < 0) {
+                    error_setg(errp, "Could not close zstd file");
+                    goto the_end;
+                }
+            }
+
+            incremental_snapshot_context.index++;
+        }
     }
 
     /* The bdrv_all_create_snapshot() call that follows acquires the AioContext
@@ -3037,6 +3485,11 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         goto the_end;
     }
 
+    // create QFlex snapshot.
+    char qflex_snapshot_name[300];
+    snprintf(qflex_snapshot_name, sizeof(qflex_snapshot_name), "%s-flexus", sn->name);
+    libqflex_save_ckpt(qflex_snapshot_name);
+
     ret = 0;
 
  the_end:
@@ -3051,6 +3504,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     }
     return ret == 0;
 }
+
 
 void qmp_xen_save_devices_state(const char *filename, bool has_live, bool live,
                                 Error **errp)
@@ -3134,52 +3588,6 @@ void qmp_xen_load_devices_state(const char *filename, Error **errp)
     migration_incoming_state_destroy();
 }
 
-static char *get_xdelta3(Error **errp)
-{
-    char *xdelta3 = g_find_program_in_path("xdelta3");
-    if (!xdelta3)
-        error_setg(errp, "xdelta3 not found in PATH");
-
-    return xdelta3;
-}
-
-static struct {
-    GHashTable *page_location;
-    uint64_t index;
-    char base_name[256];
-} incremental_snapshot_context = {
-    .page_location = NULL,
-    .index = 0,
-    .base_name = {0},
-};
-
-static struct RAMBlock *get_main_memory(void) {
-    struct RAMBlock *ram;
-    INTERNAL_RAMBLOCK_FOREACH(ram) {
-        int compare = strcmp(ram->idstr, "mach-virt.ram");
-        // printf("RAMBlock %s\n", ram->idstr);
-        if (compare) {
-            continue;
-        }
-        return ram;
-    }
-    assert(false);
-}
-
-static void pause_snapshotting_main_memory(bool stop) {
-    struct RAMBlock *ram;
-    INTERNAL_RAMBLOCK_FOREACH(ram) {
-        if (strcmp(ram->idstr, "mach-virt.ram")) {
-            continue;
-        }
-        if (stop) {
-            qemu_ram_unset_migratable(ram);
-        } else {
-            qemu_ram_set_migratable(ram);
-        }
-    }
-}
-
 static void *uffd_on_demand_thread(void *main_ram) {
     RAMBlock *ram = (RAMBlock *)main_ram;
     assert(ram != NULL);
@@ -3209,7 +3617,7 @@ static void *uffd_on_demand_thread(void *main_ram) {
         uint64_t offset = fault_address - (uint64_t)ram->host;
         assert(offset < ram->used_length);
 
-        // Load the page. First check the index. 
+        // Load the page. First check the index.
         struct page_location_pair_t *info = ram->on_demand_index ? g_hash_table_lookup(
             ram->on_demand_index,
             GINT_TO_POINTER(offset)
@@ -3218,13 +3626,13 @@ static void *uffd_on_demand_thread(void *main_ram) {
         FILE *checkpoint_file = NULL;
 
         if (info) {
-            // this means it is in a certain file.
+            // this means it is in a certain file (incremental delta).
             // find the file.
             char incremental_file_name[350];
             snprintf(
-                incremental_file_name, 
-                sizeof(incremental_file_name), 
-                "%s.mem/%lu", 
+                incremental_file_name,
+                sizeof(incremental_file_name),
+                "%s.mem/%lu",
                 ram->on_demand_file_name,
                 info->which_file
             );
@@ -3238,9 +3646,58 @@ static void *uffd_on_demand_thread(void *main_ram) {
             // read a page.
             uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
             assert(size == 1 && "Failed to read a page from the incremental file");
+        } else if (ram->on_demand_base_sparse_index != NULL) {
+            // Using sparse base format
+            // Use g_hash_table_lookup_extended to distinguish "not found" from "value is 0"
+            gpointer file_offset_ptr;
+            gboolean found = g_hash_table_lookup_extended(
+                ram->on_demand_base_sparse_index,
+                GINT_TO_POINTER(offset),
+                NULL,  // we don't need the original key
+                &file_offset_ptr
+            );
+
+            if (found) {
+                // Page exists in sparse base (non-zero page)
+                uint64_t file_offset = (uint64_t)file_offset_ptr;
+                char data_file_name[350];
+                snprintf(data_file_name, sizeof(data_file_name), "%s.mem/base.data", ram->on_demand_file_name);
+
+                checkpoint_file = fopen(data_file_name, "rb");
+                assert(checkpoint_file != NULL);
+
+                fseek(checkpoint_file, file_offset, SEEK_SET);
+                uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
+                assert(size == 1 && "Failed to read a page from base.data");
+            } else {
+                // Page is not in sparse index, it's a zero page
+                memset(buffer, 0, qemu_target_page_size());
+            }
+
+            // Verify against complete base file if it exists
+            char base_file_name[350];
+            snprintf(base_file_name, sizeof(base_file_name), "%s.mem/base", ram->on_demand_file_name);
+            FILE *verify_file = fopen(base_file_name, "rb");
+            if (verify_file) {
+                uint8_t *verify_buffer = g_malloc(qemu_target_page_size());
+                fseek(verify_file, offset, SEEK_SET);
+                uint vsize = fread(verify_buffer, qemu_target_page_size(), 1, verify_file);
+                if (vsize == 1) {
+                    for (uint i = 0; i < qemu_target_page_size(); ++i) {
+                        if (buffer[i] != verify_buffer[i]) {
+                            printf("ERROR: Sparse format mismatch with complete base at page offset %lu, byte %u\n",
+                                   offset, i);
+                            printf("  Sparse value: 0x%02x, Base value: 0x%02x\n",
+                                   buffer[i], verify_buffer[i]);
+                            assert(false && "Sparse format does not match complete base file");
+                        }
+                    }
+                }
+                g_free(verify_buffer);
+                fclose(verify_file);
+            }
         } else {
-            // this means it is in the base file.
-            // We need to load the base file.
+            // Using complete base file format
             char base_file_name[350];
             snprintf(base_file_name, sizeof(base_file_name), "%s.mem/base", ram->on_demand_file_name);
 
@@ -3269,15 +3726,17 @@ static void *uffd_on_demand_thread(void *main_ram) {
 
         // copy the page to the fault address.
         assert(uffd_copy_page(
-            ram->on_demand_uffd_fd, 
-            (void *)fault_address,  
+            ram->on_demand_uffd_fd,
+            (void *)fault_address,
             buffer,
             qemu_target_page_size(),
             false
         ) == 0);
 
         // done
-        fclose(checkpoint_file);
+        if (checkpoint_file) {
+            fclose(checkpoint_file);
+        }
 
     }
 }
@@ -3317,22 +3776,18 @@ bool load_snapshot(const char *name, const char *vmstate,
     aio_context_release(aio_context);
 
     char zstd_snapshot_name[293];
-    char xdelta_snapshot_name[295];
-    char raw_snapshot_name[293];
     char incremental_base_name[350];
+    char incremental_base_data_name[350];
     char incremental_loc_name[350];
     snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
-    snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
-    snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
     snprintf(incremental_base_name, sizeof(incremental_base_name), "%s.mem/base", sn.name);
+    snprintf(incremental_base_data_name, sizeof(incremental_base_data_name), "%s.mem/base.data", sn.name);
     snprintf(incremental_loc_name, sizeof(incremental_loc_name), "%s.loc", sn.name);
 
     if (ret < 0) {
         return false;
-    } else if (sn.vm_state_size == 0 && 
-                !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
-                !g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
-                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
+    } else if (sn.vm_state_size == 0 &&
+                !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
                 !g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) &&
                 !g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
@@ -3358,46 +3813,16 @@ bool load_snapshot(const char *name, const char *vmstate,
     bool is_incremental_delta = false;
 
     /* restore the VM state */
-    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        char *xdelta3 = get_xdelta3(errp);
-        if (!xdelta3)
-            return false;
-
-        const char *args[] = {xdelta3, "-d", "-q", "-c", xdelta_snapshot_name, NULL};
-
-        QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
-        g_free(xdelta3);
-        if (!ioc) {
-            error_setg(errp, "Could not create pipe for xdelta3");
-            return false;
-        }
-
-        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
-
-        f = qemu_file_new_input(QIO_CHANNEL(ioc));
-        if (!f) {
-            error_setg(errp, "Could not open VM state file");
-            return false;
-        }
-
-    } else if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         f = qemu_file_open_zstd_input(zstd_snapshot_name, errp);
         if (!f) {
             error_setg(errp, "Could not open VM state file");
             return false;
         }
 
-    } else if (g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        QIOChannelFile *ioc = qio_channel_file_new_path(raw_snapshot_name, O_RDONLY | O_BINARY, 0, errp);
-        if (!ioc) {
-            error_setg(errp, "Could not open snapshot file");
-            return false;
-        }
-
-        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
-
-        f = qemu_file_new_input(QIO_CHANNEL(ioc));
-    } else if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) || g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
+    } else if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) ||
+               g_file_test(incremental_base_data_name, G_FILE_TEST_IS_REGULAR) ||
+               g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
         // We are going to load the state from <name>.state.zstd.
         char state_file_name[350];
         snprintf(state_file_name, sizeof(state_file_name), "%s.state.zstd", sn.name);
@@ -3407,7 +3832,8 @@ bool load_snapshot(const char *name, const char *vmstate,
             return false;
         }
 
-        if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR)) {
+        if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) ||
+            g_file_test(incremental_base_data_name, G_FILE_TEST_IS_REGULAR)) {
             is_incremental_base = true;
         } else {
             is_incremental_delta = true;
@@ -3442,7 +3868,7 @@ bool load_snapshot(const char *name, const char *vmstate,
             char loc_file[300];
             snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
             FILE *loc_file_fd = fopen(loc_file, "rb");
-            
+
             if (!loc_file_fd) {
                 error_setg(errp, "Could not open the location file");
                 ret = -2;
@@ -3458,9 +3884,9 @@ bool load_snapshot(const char *name, const char *vmstate,
             uint64_t _current_index = 0;
 
             deserialize_incremental_loc_file(
-                loc_file_fd, 
-                main_ram->on_demand_file_name, 
-                256, 
+                loc_file_fd,
+                main_ram->on_demand_file_name,
+                256,
                 &_current_index,
                 main_ram->on_demand_index
             );
@@ -3470,41 +3896,96 @@ bool load_snapshot(const char *name, const char *vmstate,
             strcpy(main_ram->on_demand_file_name, name);
         }
 
+        // Try to load sparse base index if it exists
+        main_ram->on_demand_base_sparse_index = NULL;
         {
-            // make sure the memory size is matched.
-            char base_mem_file[300];
-            snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", main_ram->on_demand_file_name);
-            FILE *base_mem_file_fd = fopen(base_mem_file, "rb");
-            if (!base_mem_file_fd) {
-                error_setg(errp, "Could not open the base memory file");
-                ret = -2;
-                goto err_drain;
+            char index_file_name[350];
+            snprintf(index_file_name, sizeof(index_file_name), "%s.mem/base.index", main_ram->on_demand_file_name);
+
+            if (g_file_test(index_file_name, G_FILE_TEST_IS_REGULAR)) {
+                FILE *index_file = fopen(index_file_name, "rb");
+                if (index_file) {
+                    main_ram->on_demand_base_sparse_index = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+                    uint64_t target_page_size = qemu_target_page_size();
+                    uint64_t page_count = main_ram->used_length / target_page_size;
+                    bool use_32bit_index = (page_count <= SPARSE_INDEX_MAX_32BIT_PAGES);
+                    uint64_t file_offset = 0;
+
+                    while (true) {
+                        uint64_t page_index;
+                        if (use_32bit_index) {
+                            uint32_t idx32;
+                            if (fread(&idx32, sizeof(uint32_t), 1, index_file) != 1) break;
+                            page_index = idx32;
+                        } else {
+                            if (fread(&page_index, sizeof(uint64_t), 1, index_file) != 1) break;
+                        }
+
+                        // Store: memory_offset (page_index * page_size) -> file_offset (position in base.data)
+                        uint64_t memory_offset = page_index * target_page_size;
+                        g_hash_table_insert(main_ram->on_demand_base_sparse_index,
+                                            GINT_TO_POINTER(memory_offset),
+                                            GINT_TO_POINTER(file_offset));
+
+                        file_offset += target_page_size;
+                    }
+
+                    fclose(index_file);
+                    printf("Loaded sparse base index with %u entries for on-demand loading (%s index)\n",
+                           g_hash_table_size(main_ram->on_demand_base_sparse_index),
+                           use_32bit_index ? "32-bit" : "64-bit");
+                }
             }
-
-            struct stat base_state;
-
-            stat(base_mem_file, &base_state);
-
-            if (base_state.st_size != main_ram->used_length) {
-                error_setg(errp, "The base memory file size does not match the RAM size");
-                ret = -2;
-                fclose(base_mem_file_fd);
-                goto err_drain;
-            }
-
-            fclose(base_mem_file_fd);
         }
 
-        // force the OS to trigger page fault for this range of memory.
-        madvise(main_ram->host, main_ram->used_length, MADV_DONTNEED);
-    
+        {
+            // Validate base memory file exists and size matches (if using complete base format)
+            // For sparse format, we skip the size check since base file may not exist
+            char base_mem_file[300];
+            snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", main_ram->on_demand_file_name);
+
+            if (main_ram->on_demand_base_sparse_index == NULL) {
+                // Using complete base format - validate size
+                FILE *base_mem_file_fd = fopen(base_mem_file, "rb");
+                if (!base_mem_file_fd) {
+                    error_setg(errp, "Could not open the base memory file");
+                    ret = -2;
+                    goto err_drain;
+                }
+
+                struct stat base_state;
+                stat(base_mem_file, &base_state);
+
+                if (base_state.st_size != main_ram->used_length) {
+                    error_setg(errp, "The base memory file size does not match the RAM size");
+                    ret = -2;
+                    fclose(base_mem_file_fd);
+                    goto err_drain;
+                }
+                fclose(base_mem_file_fd);
+            } else {
+                // Using sparse format - validate base.data exists
+                char data_file_name[350];
+                snprintf(data_file_name, sizeof(data_file_name), "%s.mem/base.data", main_ram->on_demand_file_name);
+                if (!g_file_test(data_file_name, G_FILE_TEST_IS_REGULAR)) {
+                    error_setg(errp, "Could not find base.data file for sparse format");
+                    ret = -2;
+                    goto err_drain;
+                }
+            }
+        }
+
         main_ram->on_demand_uffd_fd = uffd_create_fd(0, false);
         assert(main_ram->on_demand_uffd_fd >= 0); // uffd_create_fd() should not fail.
 
+        // force the OS to trigger page fault for this range of memory.
+        madvise(main_ram->host, main_ram->used_length, MADV_DONTNEED);
+
         assert(uffd_register_memory(
-            main_ram->on_demand_uffd_fd, 
-            main_ram->host, 
-            main_ram->used_length, 
+            main_ram->on_demand_uffd_fd,
+            main_ram->host,
+            main_ram->used_length,
             UFFDIO_REGISTER_MODE_MISSING,
             &main_ram->on_demand_uffd_ioctls
         ) == 0);
@@ -3514,7 +3995,7 @@ bool load_snapshot(const char *name, const char *vmstate,
             main_ram->on_demand_ref_host = qemu_anon_ram_alloc(main_ram->used_length, &main_ram->mr->align, false, true);
             memory_addr_to_load = main_ram->on_demand_ref_host;
         }
-        
+
         // Start another thread to handle the uffd events.
         assert(pthread_create(
             &main_ram->on_demand_uffd_thread,
@@ -3526,20 +4007,8 @@ bool load_snapshot(const char *name, const char *vmstate,
 
     if (!(IS_ON_DEMAND_LOADING && !ON_DEMAND_CHECKING)) {
            if (is_incremental_base) {
-            QEMUFile *f = qemu_file_open_input(incremental_base_name, errp);
-            if (!f) {
-                error_setg(errp, "Could not open VM state file");
-                return false;
-            }
-            // Read the memory completely from the buffer.
-            ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
-            if (len != main_ram->used_length) {
-                error_setg(errp, "Could not read the memory completely");
-                ret = -2;
-                if (len < 0) {
-                    ret = len;
-                }
-
+            ret = load_base_memory_sparse(name, memory_addr_to_load, main_ram->used_length, errp);
+            if (ret < 0) {
                 goto err_drain;
             }
         }
@@ -3548,7 +4017,7 @@ bool load_snapshot(const char *name, const char *vmstate,
             char loc_file[300];
             snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
             FILE *loc_file_fd = fopen(loc_file, "rb");
-            
+
             if (!loc_file_fd) {
                 error_setg(errp, "Could not open the location file");
                 ret = -2;
@@ -3562,39 +4031,23 @@ bool load_snapshot(const char *name, const char *vmstate,
             incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
 
             deserialize_incremental_loc_file(
-                loc_file_fd, 
-                incremental_snapshot_context.base_name, 
-                sizeof(incremental_snapshot_context.base_name), 
+                loc_file_fd,
+                incremental_snapshot_context.base_name,
+                sizeof(incremental_snapshot_context.base_name),
                 &incremental_snapshot_context.index,
                 incremental_snapshot_context.page_location
             );
             fclose(loc_file_fd);
 
-            // First, we need to load the base memory.
-            {
-                char base_mem_file[300];
-                snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", incremental_snapshot_context.base_name);
-                QEMUFile *f = qemu_file_open_input(base_mem_file, errp);
-                if (!f) {
-                    error_setg(errp, "Could not open the base memory file");
-                    ret = -2;
-                    goto err_drain;
-                }
+            incremental_snapshot_context.index += 1; // make this pointing to the next file to be written.
 
-                // Read the memory completely from the buffer.
-                ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
-                if (len != main_ram->used_length) {
-                    error_setg(errp, "Could not read the memory completely");
-                    ret = -2;
-                    if (len < 0) {
-                        ret = len;
-                    }
-
-                    goto err_drain;
-                }
-                qemu_fclose(f);
+            // First, we need to load the base memory (supports sparse format).
+            ret = load_base_memory_sparse(incremental_snapshot_context.base_name,
+                                          memory_addr_to_load, main_ram->used_length, errp);
+            if (ret < 0) {
+                goto err_drain;
             }
-            
+
             // Now we need to load the delta memory.
             // We need to group the pages by their file number.
             // file_number -> [(page_number, offset)]
@@ -3622,7 +4075,7 @@ bool load_snapshot(const char *name, const char *vmstate,
                     g_array_append_vals(array, page_info, 1);
                 }
             }
-            
+
             // Now, we open each file, and read the page in the file.
             {
                 GHashTableIter iter;
@@ -3851,7 +4304,7 @@ static void snapshot_save_job_bh(void *opaque)
 
     job_progress_set_remaining(&s->common, 1);
     s->ret = save_snapshot(s->tag, false, s->vmstate,
-                           true, s->devices, s->errp);
+                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, s->errp);
     job_progress_update(&s->common, 1);
 
     qmp_snapshot_job_free(s);
