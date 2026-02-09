@@ -8,7 +8,7 @@
 
 typedef struct PDESNetState {
     NetClientState nc;
-    PDESEngine *engine;
+    PDESWWT *engine;
 } PDESNetState;
 
 static void pdes_net_cleanup(NetClientState *nc) {
@@ -19,19 +19,17 @@ static void pdes_net_cleanup(NetClientState *nc) {
 }
 
 static ssize_t pdes_net_receive(NetClientState *nc, const uint8_t *buf, size_t size) {
-    return;
+    // printf("^^^^^^^^^^^^^^ PDES Netdev receive (request to send) called with packet of length %zu ^^^^^^^^^^^^^^ \n", size);
     PDESNetState *s = DO_UPCAST(PDESNetState, nc, nc);
-    printf("^^^^^^^^^^^^^^ PDES Netdev sending packet of length %zu^^^^^^^^^^^^^^ \n", size);
-    int ret = pdes_engine_send(s->engine, buf, size);
+    int ret = wwt_send(s->engine, buf, size);
+    // printf("^^^^^^^^^^^^^^ PDES Netdev sending packet of length %zu with return value %d^^^^^^^^^^^^^^ \n", size, ret);   
     return (ret < 0) ? ret : size;
 }
 
 static void pdes_recv_callback(void *opaque, const uint8_t *data, size_t len) {
-    return len;
     NetClientState *nc = opaque;
-    printf("^^^^^^^^^^^^^^ PDES Netdev received packet of length %zu^^^^^^^^^^^^^^ \n", len);
+    // printf("^^^^^^^^^^^^^^ PDES Netdev received packet of length %zu^^^^^^^^^^^^^^ \n", len);
     qemu_send_packet(nc, data, len);
-    qemu_notify_event();
 }
 
 static NetClientInfo net_pdes_info = {
@@ -47,13 +45,11 @@ int net_init_pdes(const Netdev *netdev, const char *name, NetClientState *peer, 
     NetClientState *nc = qemu_new_net_client(&net_pdes_info, peer, "pdes", name);
     PDESNetState *s = DO_UPCAST(PDESNetState, nc, nc);
     
-    // s->engine = pdes_engine_create(pdes_opts->shm_send, pdes_opts->shm_recv, pdes_opts->sync, pdes_opts->latencyns, pdes_recv_callback, nc);
-    // nc->link_down = false;
+    s->engine = pdes_engine_wwt_create(pdes_opts->shm_send, pdes_opts->shm_recv, pdes_opts->sync, pdes_opts->latencyns, pdes_recv_callback, nc, pdes_opts->master);
+
+
+
     
-    // // Notify peer (the emulated NIC) about link status
-    // if (nc->peer && nc->peer->info->link_status_changed) {
-    //     nc->peer->info->link_status_changed(nc->peer);
-    // }
     printf("PDES Netdev initialized with shm_send=%s, shm_recv=%s, sync=%d, latencyns=%lu\n",
            pdes_opts->shm_send, pdes_opts->shm_recv, pdes_opts->sync, pdes_opts->latencyns);
 

@@ -8,6 +8,8 @@
 #include "qemu/timer.h"
 
 
+PDESCommunicator * singleton_comm = NULL;
+
 typedef struct {
     volatile uint32_t write_idx;
     volatile uint32_t read_idx;
@@ -83,6 +85,11 @@ static int pdes_comm_init_ring(const char *shm_name,
 PDESCommunicator *pdes_comm_create(const char *shm_send_name,
                                    const char *shm_recv_name)
 {
+    if (singleton_comm != NULL) {
+        // Print error and exit
+        fprintf(stderr, "Error: Attempted to create multiple PDESCommunicator instances. Only one instance is allowed.\n");
+        exit(EXIT_FAILURE);
+    }
     PDESCommunicator *comm;
     size_t shm_size = sizeof(ShmRing);
 
@@ -107,13 +114,14 @@ PDESCommunicator *pdes_comm_create(const char *shm_send_name,
         return NULL;
     }
 
+    singleton_comm = comm;
     return comm;
 }
 
 
 Message create_message(const uint8_t *data, size_t len, uint8_t type, uint64_t ts_ns)
 {
-    Message msg;
+    Message msg = {0};
     msg.ts_ns = ts_ns;
     msg.len   = (uint32_t)len;
     msg.type  = type;
@@ -158,10 +166,10 @@ int pdes_comm_send(PDESCommunicator *comm, Message *msg)
     ring = comm->ring_send;
     next_write = (ring->write_idx + 1) % RING_SIZE;
     while (next_write == ring->read_idx) {
-        printf("============================PDES Comm waiting to send message, ring buffer full============================\n");
         // TODO check if we can make this better
         // printf("PDES Comm ring buffer full, cannot send message now.\n");
-        // usleep(1000);  /* Wait for space to become available */
+        usleep(50);  /* Wait for space to become available */
+        // pdes_engine_poll(get_singleton_engine());
         // return -EAGAIN;
     }
 
@@ -171,7 +179,9 @@ int pdes_comm_send(PDESCommunicator *comm, Message *msg)
 
     qatomic_set_mb(&ring->write_idx, next_write);
 
-    printf("=========================== PDES Engine: Sent message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    // if(MSG_TYPE_NORMAL == msg->type){
+    //     printf("=========================== PDES Engine: Sent message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    // }
     return 0;
 }
 
@@ -192,6 +202,9 @@ int pdes_comm_recv(PDESCommunicator *comm, Message *msg){
 
     qatomic_set_mb(&ring->read_idx, (ring->read_idx + 1) % RING_SIZE);
 
-    printf("=========================== PDES Engine: Received message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    // if(MSG_TYPE_NORMAL == msg->type){
+    //     printf("=========================== PDES Engine: Received message of length %u and of type %u =========================== \n", msg->len, msg->type);
+    // }
     return msg->len;
 }
+
