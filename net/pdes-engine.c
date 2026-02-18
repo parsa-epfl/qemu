@@ -6,6 +6,9 @@
 #include "include/migration/snapshot.h"
 #include "include/sysemu/runstate.h"
 #include "net/pdes-checkpoint.h"
+#include "migration/snapshot.h"
+#include "sysemu/cpu-timers.h"
+#include "hw/core/cpu.h"
 
 // TODO this should be generlized to multiple neighbours later
 // For now singleton pdes engine
@@ -38,6 +41,7 @@ PDESEngine *pdes_engine_create(
 ) {
     // Show error if singleton was created before
     assert(singleton_engine == NULL && "Singleton engine already created");
+    icount_set_sleep(false);
     PDESEngine *engine = g_new0(PDESEngine, 1);
     engine->comm = pdes_comm_create(shm_send, shm_recv);
     engine->needs_sync = sync;
@@ -61,7 +65,9 @@ PDESEngine *pdes_engine_create(
     engine->master = master;
     engine->init_flag = 0;
     engine->master_init = false;
-
+    engine->pause_bh = NULL;
+    engine->needs_to_checkpoint = false;
+    engine->notified_neighbors = false;
 
 
 
@@ -107,42 +113,38 @@ int pdes_engine_send(PDESEngine *engine, Message *msg) {
 }
 
 
-void initiate_checkpoint(void * opaque){
 
+void initiate_checkpoint_master(void *context){
+    printf("Master initiating checkpoint after receiving initiation message from neighbor...\n");
     PDESEngine *engine = get_singleton_engine();
-    if (engine->master){
-        assert(false && "Master should not receive checkpoint initiation callback");
+    if (!engine->master){
+        assert(false && "Only master should receive checkpoint initiation callback");
     }
-    
-    // Just a temp function to test savevm during drain
-    Error *err = NULL;
-    printf("PDES Engine performing systemic snapshot save during drain...\n");
-
-    // Get snapshot name from msg data
-    Message * msg = (Message *)opaque;
-    char snapshot_name[1000];
-    printf("initiate_checkpoint called with snapshot name: %s and message len: %u\n", msg->data, msg->len);
-    memcpy(snapshot_name, msg->data, msg->len);
-
-    printf("current virtual time during checkpoint initiation: %lu ns\n", get_universal_virtual_time(get_singleton_engine()));
-
-    // As part of savesnap shot, qemu will pause things, and it will call drain, so by the time we send drain start message , everything is paused and there is nothing on the fly (spagetified due to qemu clock design)
-    save_snapshot(snapshot_name,
-                true, NULL, false, NULL, &err);
-    
-    printf("After 3 virtual time during checkpoint initiation: %lu ns\n", get_universal_virtual_time(get_singleton_engine()));
-    printf("PDES Engine completed systemic snapshot save during drain.\n");
-    g_free(msg);
+    printf("Master initiating systemic snapshot save for checkpoint initiation...\n");
+    save_snapshot("init_warmed",
+                true, NULL, false, NULL, NULL);
     qemu_bh_delete(engine->checkpoint_bh);
-    engine->checkpoint_bh = NULL;
-    vm_start();
+    printf("Master completed systemic snapshot save for checkpoint initiation.\n");
 
-    if (err) {
-        error_reportf_err(err, "Error during temp snapshot save: ");
-        exit(1);
-    }
+    return;
 }
-
+void set_checkpoint_values_for_master(){
+    // if master is ready to initiate checkpoint start it
+    PDESEngine *engine = get_singleton_engine();
+    printf("Master is already initialized, initiating checkpoint immediately.\n");
+    engine->needs_to_checkpoint = true;
+    // TODO this is specific to wwt, need to generalize later, maybe include this in the message
+    PDESWWT *wwt_engine = get_singleton_wwt_engine();
+    engine->checkpoint_quantum_round = wwt_engine->current_quantum_round; // this is specific to wwt, need to generalize later
+    char* snapshot_name = "init_warmed"; 
+    snprintf(engine->checkpoint_name, sizeof(engine->checkpoint_name), "%s", snapshot_name);
+    if (!engine->notified_neighbors){
+        notify_neighbors_for_drain(engine, snapshot_name);
+        engine->notified_neighbors = true;
+    }
+    printf("Setting checkpoint values for master, snapshot name: %s, quantum round: %lu\n", engine->checkpoint_name, engine->checkpoint_quantum_round);
+    // For now skipping 
+}
 void process_message(PDESEngine *engine, Message *msg) {
 
     // Make sure the message goes up the chain before doing anything else
@@ -154,27 +156,8 @@ void process_message(PDESEngine *engine, Message *msg) {
     // TODO both drain start and and end are based on just one neighbor for now, need to generalize later
     if (msg->type==DRAIN_START){
         printf("PDES Engine received drain end message, marking drained as true.\n");
-        engine->checkpoint_in_progress = true;
+        assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
 
-        if (!engine->master){
-            printf("PDES Engine initiating systemic snapshot save after drain.\n");
-            // This is not master so we need to savesnapshot immidiately
-            // TODO change this so the message includes snapshot name
-            // TODO : Ugly solution for now to avoid deadlock:  create a host time timer, call this later, call it immidiately after this
-            // TODO We will get stuck thanks to quanta, need to generalize later
-            Message *msg_copy = g_new(Message, 1);
-            *msg_copy = *msg;
-
-            // This is caused due not being able to call savevm from a dev. This solution causes problems for pause, hence using qemu_clock_run_all_timers/or specific run. TODO this needs to be fixed later
-            // engine->checkpoint_initiate_timer = timer_new_ns(QEMU_CLOCK_REALTIME, initiate_checkpoint, msg_copy);
-            // timer_mod(engine->checkpoint_initiate_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));   
-            engine->checkpoint_bh = qemu_bh_new(initiate_checkpoint, msg_copy);
-            qemu_bh_schedule(engine->checkpoint_bh);
-            
-        }else{
-            // This variable is only used for master, TODO maybe move this
-            engine->neighbour_drained += 1;
-        }
     }else if (msg->type==DRAIN_END){
         printf("PDES Engine received drain end message, marking checkpoint as completed.\n");
         if (!engine->master){
@@ -184,31 +167,37 @@ void process_message(PDESEngine *engine, Message *msg) {
     }else if(msg->type==CHECKPOINT_INIT_STEP){
         printf("PDES Engine received checkpoint initiation message, initiating checkpoint.\n");
         engine->init_flag++;
-        if (engine->init_flag == 1 && engine->master){
-            if (engine->master_init){
-                // if master is ready to initiate checkpoint start it
-                printf("Master is already initialized, initiating checkpoint immediately.\n");
-                pdes_drain(engine, "init_warmed");
+        // TODO expand this into multiple nodes
+        if (engine->master){
+            printf("This is a master, checking if we can initiate checkpoint immediately or need to wait for next initiation message.\n");
+            if (engine->init_flag == 1 && engine->master_init){
+                set_checkpoint_values_for_master();
+            }else{
+                printf("Master received checkpoint initiation message, but master init flag is not set, marking master as ready and waiting for next checkpoint initiation message.\n");
             }
+        }else{
+            printf("Not a master, just returning after receiving checkpoint initiation message.\n");
         }
     }
 }
 
 void pdes_engine_poll(void *opaque) {
     PDESEngine *engine = opaque;
-    Message msg;
-
-    int len = pdes_comm_recv(engine->comm, &msg);
     
-    if (len == NO_MESSAGE) {
-        // No message available
-        // TODO see if anything needs to happen here
-    }
-    else if (len < 0) {
-        // Error handling
-        fprintf(stderr, "Error receiving message: %d\n", len);
-    }else{
-        process_message(engine, &msg);
+    while(true){
+        Message msg;
+        int res = pdes_comm_recv(engine->comm, &msg);
+        if (res == NO_MESSAGE) {
+            // No message to process
+            break;
+        } else if (res < 0 ) {
+            // Error occurred while polling
+            fprintf(stderr, "Error polling for messages: %d\n", res);
+            break;
+        } else {
+            // Message received, process it
+            process_message(engine, &msg);
+        }
     }
     // TODO add a flag so that when calling this manually we don't reschedule again and again
     schedule_poll(engine);
@@ -219,93 +208,91 @@ void schedule_poll(void *opaque){
     timer_mod(engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+50000); // 5 microseconds
 }
 
-void pdes_pause(void *opaque){
+void pdes_pause_bh(void *opaque){
     PDESEngine *engine = opaque;
-    engine->paused = true;
-    // printf("=========Going into PDES pause=========\n");
-    while (engine->paused){
-        // Wait until not in the middle of processing
-        // TODO all usleeps need to be addressed for speedup
-        usleep(1000); // Sleep for 1 ms
 
-        // TODO again this is specific to QEMU and how sleeping is affected in ICOUNT mode, make it more generalized later
-        engine->pause_status_cb(engine->pause_status_opaque);
-        // TODO we need this as if we pull and see drain message, it will be scheduled for future but never called. This is due to how qemu manages clocks. Fix this
-        // qemu_clock_run_timers(QEMU_CLOCK_REALTIME);
-        aio_bh_poll(qemu_get_aio_context());
-        // qemu_clock_run_all_timers();
-    }
-    // Since qemu_clock_run_timers can pause vm execution
-    vm_start();
-    // printf("WWT: quanta_sync resumed. VM running state: %d, current virtual time: %lu ns\n", 
-    //    runstate_is_running(), get_universal_virtual_time(engine));
-    // printf("=========Exiting PDES pause=========\n");
+    vm_stop(RUN_STATE_SAVE_VM);
+    // Remove the bottom half
+    qemu_bh_delete(engine->pause_bh);
+    engine->pause_bh = NULL;
 }
 
+void pdes_pause(void *opaque){
+    PDESEngine *engine = opaque;
+    
+
+    engine->paused = true;
+    // Create bh
+    // Make sure bh is empty
+    // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to pause, this should not happen");
+    // engine->pause_bh = qemu_bh_new(pdes_pause_bh, engine);
+    // qemu_bh_schedule(engine->pause_bh);
+    
+    // qemu_system_vmstop_request_prepare();
+    // qemu_system_vmstop_request(RUN_STATE_PAUSED);
+
+    assert(engine->pause_bh == NULL);
+    engine->pause_bh = qemu_bh_new(pdes_pause_bh, engine);
+    qemu_bh_schedule(engine->pause_bh);
+
+
+    
+
+    if (current_cpu == NULL){
+        // This can happen if we call pause before the CPU is created, in that case we just return and do nothing as there is nothing to pause yet
+        // printf("pdes_pause called but current_cpu is NULL, this can happen if pause is called before CPU is created, just returning without pausing.\n");
+        return;
+    }
+    
+
+    current_cpu->stop = true;
+    cpu_exit(current_cpu);
+
+
+
+    return;
+}
+
+
 void pdes_play(void *opaque){
+    // TODO add doc where this can be called from (not virt)
     PDESEngine *engine = opaque;
     engine->paused = false;
+    // Create bh
+    // Make sure bh is empty
+    // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to play, this should not happen");
+    // engine->pause_bh = qemu_bh_new(play_bh, engine);
+    // qemu_bh_schedule(engine->pause_bh);
+    vm_start();
+    return;
+}
+
+int notify_neighbors_for_drain(PDESEngine *engine, char * snapshot_name){
+    assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
 }
 
 int pdes_drain(PDESEngine *engine, char * snapshot_name) {
-    // TODO list of things that should be turned off when no sync is needed
-    // TODO turn this based on connected neighbours later
-    // if (!engine->needs_sync){
-    //     // If sync is not needed, no drain is needed
-    //     return 0;
-    // }
+
+    assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
     if (engine->master){
         engine->checkpoint_in_progress = true;
    
     
 
         // Create PDES start message for everyone lese
-        uint8_t snapshot_name_data[1006];
-        int n = snprintf((char *)snapshot_name_data, sizeof(snapshot_name_data),
-                        "QPDES%s", snapshot_name ? snapshot_name : "");
-        if (n < 0) {
-            // encoding/format error
-            return -1;
+        if (!engine->notified_neighbors){
+            notify_neighbors_for_drain(engine, snapshot_name);
+            engine->notified_neighbors = true;
         }
 
-        if (n >= sizeof(snapshot_name_data)) {
-            // Output was truncated, handle the error
-            fprintf(stderr, "Snapshot name is too long and was truncated\n");
-            return -1;
-        }
-        snprintf((char *)snapshot_name_data, sizeof(snapshot_name_data), "QPDES%s", snapshot_name);
-        Message drain_start_msg = create_message(snapshot_name_data, (size_t)n, DRAIN_START, get_universal_virtual_time(engine));
-        pdes_comm_send(engine->comm, &drain_start_msg);
-        printf("created drain start message with snapshot name: %s with size %zu and sent it\n", snapshot_name_data, (size_t)n);
-
-
-
-        // TODO make this more generalized
-        while (engine->neighbour_drained < 1){
-            // Send drain start message repeatedly until drained is true
-            usleep(1000); // Sleep for 1 ms
-            pdes_engine_poll(engine);
-        }
-
+        
         Message drain_end_msg = create_message(NULL, 0, DRAIN_END, get_universal_virtual_time(engine));
         pdes_comm_send(engine->comm, &drain_end_msg);
         engine->neighbour_drained = 0;
 
         printf("Everyone has drained and finished checkpointing.\n");
-    }else{
-        // Just create an empty PDES start message
-        Message drain_start_msg = create_message(NULL, 0, DRAIN_START, get_universal_virtual_time(engine));
-        pdes_comm_send(engine->comm, &drain_start_msg);
-        printf("Sent drain start message to master, waiting for checkpoint to complete.\n");
-        // Wait until checkpoint is complete, which will be marked by checkpoint_in_progress to be false again
-        while (engine->checkpoint_in_progress){
-            printf("Checkpoint in progress, waiting... current virtual time: %lu ns\n", get_universal_virtual_time(engine));
-            usleep(100000); // Sleep for 100 ms
-            pdes_engine_poll(engine);
-        }
-        printf("Checkpoint completed, resuming execution.\n");
     }
-
+    pdes_inflight_save_json(snapshot_name);
     return 0;
 }
 
@@ -321,3 +308,30 @@ int send_initiate_checkpoint_message(PDESEngine *engine){
     return 0;
 }
 
+void finish_initiate_checkpoint(PDESEngine *engine){
+    printf("========================GOT signal for initiate_checkpoint========================\n");
+    // printf("+++++++++++++ Skipping checkpoint initiation because this is not implemented yet, just returning. +++++++++++++\n");
+    // return;
+    if (engine->master){
+        // This is master, we can start checkpoint immediately
+        // TODO expand this to multiple nodes
+        engine->master_init = true;
+
+        if (engine->init_flag >= 1){
+            printf("Master received checkpoint initiation message, initiating checkpoint immediately.\n");
+            // pdes_drain(engine, "init_warmed", SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE);
+
+            // Make sure neighbors know they can checkpoint at end of quantum
+            // and set flags for our selves as well
+            set_checkpoint_values_for_master();
+            printf("Master sent drain start message for checkpoint initiation to neighbors, waiting for neighbors to drain and checkpoint.\n");
+        }else{
+            printf("Master received checkpoint initiation message, but init flag is not set, marking master as ready and waiting for next checkpoint initiation message.\n");
+            return;
+        }
+    }else{
+        int res = send_initiate_checkpoint_message(engine);
+        assert (res == 0 && "Failed to send checkpoint initiation message to master");
+        printf("Sent checkpoint initiation message to master, returning.\n");
+    }
+}

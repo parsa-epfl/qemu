@@ -29,7 +29,11 @@ static ssize_t pdes_net_receive(NetClientState *nc, const uint8_t *buf, size_t s
 static void pdes_recv_callback(void *opaque, const uint8_t *data, size_t len) {
     NetClientState *nc = opaque;
     // printf("^^^^^^^^^^^^^^ PDES Netdev received packet of length %zu^^^^^^^^^^^^^^ \n", len);
-    qemu_send_packet(nc, data, len);
+    int res = qemu_send_packet(nc, data, len);
+    if (res <= 0) {
+        // Packet was dropped — need to handle this
+        fprintf(stderr, "PDES: qemu_send_packet dropped packet of len %zu\n", len);
+    }
 }
 
 static NetClientInfo net_pdes_info = {

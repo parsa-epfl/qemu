@@ -19,7 +19,7 @@ void process_message_at_virtual_time(MessageReceiveContext *opaque) {
     }
 
     pdes_inflight_remove(&ctx->msg, ctx->timestamp_ns);
-    g_free(ctx->one_time_poll_timer);
+    timer_free(ctx->one_time_poll_timer);
     g_free(ctx);
 }
 

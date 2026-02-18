@@ -243,6 +243,8 @@ bool validate_checkpoint(const char **check_point_name){
                 printf("modified checkpoint name for PDESEngine: %s and continuing with checkpointing.\n", *check_point_name);
                 return true;
             }else if (name != NULL && strcmp(name, "init_warmed") == 0) {
+                printf("!!!!!!!!!!!!!!!! THIS SHOULD NOT BE HAPPENINGING !!!!!!!!!!!!!!!!\n");
+                return false;
                 // TODO expand this to multiple nodes
                 // This is not the master so it can't initiate it, just let master know we are ready
                 printf("Received drain signal but not master, marking engine as done for init.\n");

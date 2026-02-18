@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "pdes-communicator.h"
 #include "qemu/timer.h"
+#include "migration/snapshot.h"
 
 typedef struct PDESEngine PDESEngine;
 typedef struct PDESWWT PDESWWT;
@@ -61,6 +62,14 @@ struct PDESEngine {
     bool master;
     int init_flag;
     bool master_init;
+
+    // V2 timer impl
+    QEMUBH *pause_bh;
+    bool needs_to_checkpoint;
+    bool notified_neighbors;
+    char checkpoint_name[10006];
+    // TODO this is specific to wwt, needs to be fixed
+    uint64_t checkpoint_quantum_round;
 };
 
 PDESEngine *pdes_engine_create(
@@ -113,6 +122,14 @@ struct PDESWWT{
     GHashTable *sync_counts;
     uint64_t current_quantum_round;
 
+
+    
+    // V2 timer impl
+    // Timer to check sync status without blocking
+    QEMUTimer *sync_check_timer;
+    bool finished_quantum;
+    QEMUBH *boundry_checkpoint_bh;
+
     
 };
 
@@ -155,5 +172,6 @@ PDESWWT *get_singleton_wwt_engine();
 int send_initiate_checkpoint_message(PDESEngine *engine);
 void sync_count_increment(GHashTable *table, uint64_t round);
 int sync_count_get(GHashTable *table, uint64_t round);
+void finish_initiate_checkpoint(PDESEngine *engine);
 
 #endif

@@ -88,4 +88,6 @@ void qemu_timer_notify_cb(void *opaque, QEMUClockType type);
 int64_t cpus_get_virtual_clock(void);
 int64_t cpus_get_elapsed_ticks(void);
 
+void icount_set_sleep(bool sleep);
+
 #endif /* SYSEMU_CPU_TIMERS_H */

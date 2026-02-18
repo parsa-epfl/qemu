@@ -47,6 +47,10 @@
  * is TCG-specific, and does not need to be built for other accels.
  */
 static bool icount_sleep = true;
+void icount_set_sleep(bool sleep)
+{
+    icount_sleep = sleep;
+}
 /* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
 #define MAX_ICOUNT_SHIFT 10
 

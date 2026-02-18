@@ -2927,8 +2927,25 @@ int qemu_loadvm_approve_switchover(void)
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
                   bool has_devices, strList *devices, Error **errp)
 {
-    printf("save_snapshot called with name=%s with number of inflight messages %d\n", name, pdes_inflight_count());
+    
+    assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
+    printf("save_snapshot called with name=%s with number of inflight messages %d \n", name, pdes_inflight_count());
     PDESEngine *engine = get_singleton_engine();
+    // TODO Need a cleaner way to force all savevms to go to boundry
+    if (engine!= NULL){
+        if (!engine->needs_to_checkpoint){
+            engine->needs_to_checkpoint = true;
+            // Copy the name
+            snprintf(engine->checkpoint_name, sizeof(engine->checkpoint_name), "%s", name ? name : "snapshot");
+            // Copy the format
+            engine->notified_neighbors = false;
+            // WWT specific
+            PDESWWT *wwt = get_singleton_wwt_engine();
+            engine->checkpoint_quantum_round = wwt->current_quantum_round;
+            engine->notified_neighbors=false;
+
+        }
+    }
 
     bool validate = validate_checkpoint(&name);
     if (!validate){
@@ -2995,6 +3012,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     bdrv_drain_all_begin();
 
     aio_context_acquire(aio_context);
+
     
     // Make sure you send and recieve everything that has been passed.
     // Based on the sync logic it should be ok if something is processed in between still 
@@ -3005,7 +3023,6 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
             printf("Failed to drain PDESEngine before snapshot, error code %d\n", drain_res);
             return false;
         }
-        pdes_inflight_save_json(name);
     }else{
         printf("No PDESEngine found, skipping drain\n");
     }
