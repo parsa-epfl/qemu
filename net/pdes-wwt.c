@@ -3,6 +3,7 @@
 #include "net/pdes-engine.h"
 #include "qemu/main-loop.h"
 #include "sysemu/runstate.h"
+#include <assert.h>
 
 extern PDESWWT *singleton_wwt_engine = NULL;
 
@@ -272,21 +273,30 @@ void wwt_sync_check(){
     bool waiting = is_waiting_for_quanta(get_singleton_wwt_engine());
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     
+    while(waiting){
+        // Poll for messages while waiting to avoid blocking message processing
+        pdes_engine_poll(wwt_engine->engine);
+        waiting = is_waiting_for_quanta(wwt_engine);
+    }
     if (waiting){
+        // TODO remove this if
         // Reschedule check
         // printf("WWT: Still waiting for quanta for round %lu at virtual time %lu ns, rescheduling sync check.\n", wwt_engine->current_quantum_round, current_time);
-        timer_mod(get_singleton_wwt_engine()->sync_check_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + 500);
+        timer_mod(get_singleton_wwt_engine()->sync_check_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + 1);
         return;
     } else {
         // Finished waiting, can delete timer
         // get engine
         // TODO this part of checkpoint is to wwt specific, change later
+        // TODO Add race condition lock so double checkpoint never happens (reason we double check needs_to_checkpoint)
         if(wwt_engine->engine->needs_to_checkpoint){
+
+            assert(false && "No checkpointing in knottykraken yet.\n");
             // Create bh and reschedule this again
-            if (wwt_engine->engine->checkpoint_quantum_round < wwt_engine->current_quantum_round && wwt_engine->should_sync){
+            if ((wwt_engine->current_quantum_round < wwt_engine->engine->checkpoint_quantum_round) && wwt_engine->should_sync){
                 printf("Checkpoint quantum round %lu is less than current quantum round %lu\n", wwt_engine->engine->checkpoint_quantum_round, wwt_engine->current_quantum_round);
                 // Just continue until we reach the quantum, so no return and no assert and no reschedule
-            }else if(wwt_engine->engine->checkpoint_quantum_round == wwt_engine->current_quantum_round || (!wwt_engine->should_sync)){
+            }else if((wwt_engine->current_quantum_round == wwt_engine->engine->checkpoint_quantum_round) || (!wwt_engine->should_sync)){
                 if (wwt_engine->boundry_checkpoint_bh == NULL){
                     wwt_engine->boundry_checkpoint_bh = qemu_bh_new(create_checkpoint_bh, NULL);
                     qemu_bh_schedule(wwt_engine->boundry_checkpoint_bh);
@@ -301,7 +311,7 @@ void wwt_sync_check(){
                 timer_mod(get_singleton_wwt_engine()->sync_check_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + 10000000);
                 return;
             }else{
-                printf("Checkpoint quantum round %lu is greater than current quantum round %lu, this should not happen\n", wwt_engine->engine->checkpoint_quantum_round, wwt_engine->current_quantum_round);
+                printf("Current quantum round %lu has already passed checkpoint quantum round %lu, this should not happen\n", wwt_engine->current_quantum_round, wwt_engine->engine->checkpoint_quantum_round);
                 assert(wwt_engine->engine->checkpoint_quantum_round <= wwt_engine->current_quantum_round && "Checkpoint quantum round should not be greater than current quantum round, if this assertion fails it means that there is an issue with how the checkpoint quantum round is being set or compared, needs to be fixed for correct checkpointing behavior");
                 return;
             }
@@ -361,7 +371,6 @@ void quanta_sync(PDESWWT *wwt_engine){
     // Sends sync, pauses and waits for others sync, then resumes
     // printf("WWT: Starting quantum sync at universal virtual time %lu ns.\n", get_universal_virtual_time(wwt_engine->engine));
     wwt_engine->finished_quantum = true;
-    send_sync(wwt_engine);
     // printf("WWT: Sent sync for quantum %lu at virtual time %lu ns and universal time %lu ns.\n", wwt_engine->current_quantum_round, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), get_universal_virtual_time(wwt_engine->engine));
 
     // same using is_waiting_for_quanta as setup, as its the same logic
@@ -387,7 +396,19 @@ void quanta_sync(PDESWWT *wwt_engine){
         }
     }
     // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
+
     pdes_pause(wwt_engine->engine);
+
+    // TODO DOCUMENT THIS MORE: for any operation between nodes that can have potential race conditions, it should be done after pause (to prevent race in node) but before send synnc (to prevent race in the other node)
+    // TODO add a lock to engine and everything that needs it. notify neighbor is a good example
+    pdes_engine_poll(wwt_engine->engine);
+
+
+
+    if(wwt_engine->should_sync){
+        // Else you'd fill up buffer
+        send_sync(wwt_engine);
+    }
 
 
     // Create a timer to check sync status without blocking

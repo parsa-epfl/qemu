@@ -9,6 +9,7 @@
 #include "migration/snapshot.h"
 #include "sysemu/cpu-timers.h"
 #include "hw/core/cpu.h"
+#include <assert.h>
 
 // TODO this should be generlized to multiple neighbours later
 // For now singleton pdes engine
@@ -132,16 +133,14 @@ void set_checkpoint_values_for_master(){
     // if master is ready to initiate checkpoint start it
     PDESEngine *engine = get_singleton_engine();
     printf("Master is already initialized, initiating checkpoint immediately.\n");
+    // TODO Make this repeated part into a function
+    engine->notified_neighbors = false;
     engine->needs_to_checkpoint = true;
     // TODO this is specific to wwt, need to generalize later, maybe include this in the message
     PDESWWT *wwt_engine = get_singleton_wwt_engine();
     engine->checkpoint_quantum_round = wwt_engine->current_quantum_round; // this is specific to wwt, need to generalize later
     char* snapshot_name = "init_warmed"; 
     snprintf(engine->checkpoint_name, sizeof(engine->checkpoint_name), "%s", snapshot_name);
-    if (!engine->notified_neighbors){
-        notify_neighbors_for_drain(engine, snapshot_name);
-        engine->notified_neighbors = true;
-    }
     printf("Setting checkpoint values for master, snapshot name: %s, quantum round: %lu\n", engine->checkpoint_name, engine->checkpoint_quantum_round);
     // For now skipping 
 }
@@ -180,7 +179,6 @@ void process_message(PDESEngine *engine, Message *msg) {
         }
     }
 }
-
 void pdes_engine_poll(void *opaque) {
     PDESEngine *engine = opaque;
     
@@ -200,12 +198,14 @@ void pdes_engine_poll(void *opaque) {
         }
     }
     // TODO add a flag so that when calling this manually we don't reschedule again and again
-    schedule_poll(engine);
+    // schedule_poll(engine);
 }
 
 void schedule_poll(void *opaque){
+    // getting rid of poll here
+    printf("!!!!!!!!!!! should not be called TODO be removed !!!!!!!!!!!\n");
     PDESEngine *engine = opaque;
-    timer_mod(engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+50000); // 5 microseconds
+    timer_mod(engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+5000000);
 }
 
 void pdes_pause_bh(void *opaque){
@@ -267,23 +267,13 @@ void pdes_play(void *opaque){
     return;
 }
 
-int notify_neighbors_for_drain(PDESEngine *engine, char * snapshot_name){
-    assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
-}
 
 int pdes_drain(PDESEngine *engine, char * snapshot_name) {
-
-    assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
     if (engine->master){
         engine->checkpoint_in_progress = true;
    
     
 
-        // Create PDES start message for everyone lese
-        if (!engine->notified_neighbors){
-            notify_neighbors_for_drain(engine, snapshot_name);
-            engine->notified_neighbors = true;
-        }
 
         
         Message drain_end_msg = create_message(NULL, 0, DRAIN_END, get_universal_virtual_time(engine));
