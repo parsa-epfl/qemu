@@ -17,5 +17,6 @@ void rr_kick_vcpu_thread(CPUState *unused);
 
 /* start the round robin vcpu thread */
 void rr_start_vcpu_thread(CPUState *cpu);
+void rr_wait_io_event(void);
 
 #endif /* TCG_ACCEL_OPS_RR_H */

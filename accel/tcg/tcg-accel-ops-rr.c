@@ -110,7 +110,7 @@ static void rr_stop_kick_timer(void)
     }
 }
 
-static void rr_wait_io_event(void)
+void rr_wait_io_event(void)
 {
     CPUState *cpu;
 
