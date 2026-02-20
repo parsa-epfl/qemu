@@ -375,16 +375,22 @@ void quanta_sync(PDESWWT *wwt_engine){
     printf("WWT: Sent sync for quantum %lu at virtual time %lu ns and universal time %lu ns.\n", wwt_engine->current_quantum_round, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), get_universal_virtual_time(wwt_engine->engine));
 
     // same using is_waiting_for_quanta as setup, as its the same logic
+    
+    // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
+
+    pdes_pause(wwt_engine->engine);
+    
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     time_test = current_time;
     if (wwt_engine->current_quantum_round > 1){
         int64_t expected_time = (wwt_engine->current_quantum_round ) * wwt_engine->quantum_ns;
         int64_t universal_time = get_universal_virtual_time(wwt_engine->engine);
+        int64_t time_diff = universal_time - expected_time;
 
 
-        if (wwt_engine->current_quantum_round==1){
+        // TODO patch for clocks not being called correctly, but pause should still work
+        if (wwt_engine->current_quantum_round==1 || abs(time_diff) < 10){
             // There might be a time difference due to the internal qemu clock skipping a constant amount
-            int64_t time_diff = universal_time - expected_time;
             printf("WWT: Time difference between universal time and expected time for quantum %lu is %ld ns.\n", wwt_engine->current_quantum_round, time_diff);
             // add this to the variable we have for bias : first_sync_virtual_time
             // TODO revisit this logic and verify it
@@ -396,9 +402,7 @@ void quanta_sync(PDESWWT *wwt_engine){
             assert (universal_time == expected_time && "Current time should be greater than or equal to expected time at the start of quanta_sync, if this assertion fails it means that the host time poll of the underlying engine is causing issues with the timing of the quanta sync, needs to be fixed for better sync performance");
         }
     }
-    // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
-
-    pdes_pause(wwt_engine->engine);
+    
     current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
 
