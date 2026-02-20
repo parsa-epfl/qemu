@@ -11,6 +11,11 @@
 #include "hw/core/cpu.h"
 #include <assert.h>
 
+#ifdef CONFIG_LIBQFLEX
+#include "middleware/libqflex/libqflex-module.h"
+#include "middleware/libqflex/libqflex.h"
+#endif
+
 // TODO this should be generlized to multiple neighbours later
 // For now singleton pdes engine
 extern PDESEngine *singleton_engine = NULL;
