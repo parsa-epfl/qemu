@@ -82,6 +82,7 @@ static int64_t icount_get_executed(CPUState *cpu)
             (cpu_neg(cpu)->icount_decr.u16.low + cpu->icount_extra));
 }
 
+static int64_t executed_icount = 0;
 /*
  * Update the global shared timer_state.qemu_icount to take into
  * account executed instructions. This is done by the TCG vCPU
@@ -92,13 +93,22 @@ static void icount_update_locked(CPUState *cpu)
     int64_t executed = icount_get_executed(cpu);
     cpu->icount_budget -= executed;
 
-#ifndef CONFIG_LIBQFLEX
+#ifdef CONFIG_LIBQFLEX
+    executed_icount += executed;
+#else
     // No need to increase the QEMU_icount here.
 
     qatomic_set_i64(&timers_state.qemu_icount,
                     timers_state.qemu_icount + executed);
 #endif
 }
+
+int64_t icount_drain_executed(void) {
+    int64_t count = executed_icount;
+    executed_icount = 0;
+    return count;
+}
+
 
 /*
  * Update the global shared timer_state.qemu_icount to take into

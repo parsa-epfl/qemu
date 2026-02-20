@@ -12,6 +12,11 @@
 
 #include "qemu/timer.h"
 
+/* used by flexus to drain and get number of executed instructions at libqflex_tick */
+int64_t icount_drain_executed(void);
+
+
+
 /* init the whole cpu timers API, including icount, ticks, and cpu_throttle */
 void cpu_timers_init(void);
 
