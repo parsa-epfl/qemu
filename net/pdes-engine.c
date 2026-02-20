@@ -12,8 +12,7 @@
 #include <assert.h>
 
 #ifdef CONFIG_LIBQFLEX
-#include "middleware/libqflex/libqflex-module.h"
-#include "middleware/libqflex/libqflex.h"
+#include "middleware/libqflex/libqflex-legacy-api.h"
 #endif
 
 // TODO this should be generlized to multiple neighbours later
@@ -252,6 +251,11 @@ void pdes_pause(void *opaque){
 
     current_cpu->stop = true;
     cpu_exit(current_cpu);
+    if (flexus_api.pause != NULL){
+        flexus_api.pause();
+    }else if(flexus_api.stop != NULL){
+        assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
+    }
 
 
 
@@ -269,6 +273,12 @@ void pdes_play(void *opaque){
     // engine->pause_bh = qemu_bh_new(play_bh, engine);
     // qemu_bh_schedule(engine->pause_bh);
     vm_start();
+    
+    if (flexus_api.resume != NULL){
+        flexus_api.resume();
+    }else if(flexus_api.stop != NULL){
+        assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
+    }
     return;
 }
 
