@@ -251,10 +251,6 @@ int64_t icount_round(int64_t count)
 
 static void icount_warp_rt(void)
 {
-    // TODO this does make things slower, look for a solution
-    #ifdef CONFIG_LIBQFLEX
-        if (!qemu_in_vcpu_thread()) return;
-    #endif
     unsigned seq;
     int64_t warp_start;
 
@@ -316,10 +312,6 @@ static void icount_timer_cb(void *opaque)
 
 void icount_start_warp_timer(void)
 {
-    // TODO this does make things slower, look for a solution
-    #ifdef CONFIG_LIBQFLEX
-        if (!qemu_in_vcpu_thread()) return;
-    #endif
     int64_t clock;
     int64_t deadline;
 
