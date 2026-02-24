@@ -285,3 +285,10 @@ bool validate_checkpoint(const char **check_point_name){
     }
 
 }
+void create_checkpoint_bh(bool exit_after){
+    if(exit_after){
+        exit(0);
+    }
+    return;
+}
+

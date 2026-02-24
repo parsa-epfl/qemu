@@ -73,6 +73,8 @@ PDESEngine *pdes_engine_create(
     engine->pause_bh = NULL;
     engine->needs_to_checkpoint = false;
     engine->notified_neighbors = false;
+    engine->notified_neighbors_for_exit = false;
+    engine->boundry_checkpoint_bh = NULL;
 
 
 
@@ -92,15 +94,33 @@ PDESEngine *pdes_engine_create(
 }
 
 
-void pdes_engine_destroy(PDESEngine *engine) {
-    printf("==========================================Destroying PDES Engine...==========================================\n");
+void notify_neighbours_of_end(PDESEngine *engine){
+    if(engine->notified_neighbors_for_exit){
+        return;
+    }
+    engine->notified_neighbors_for_exit = true;
+
+    printf("==========================================Existing PDES Engine...==========================================\n");
     Message mssg = create_message(NULL, 0, END_OF_EMULATION, get_current_virtual_for_destroy_message(engine));
     pdes_comm_send(engine->comm, &mssg);
     if (engine->comm) {
         pdes_comm_destroy(engine->comm);
     }
     g_free(engine);
-    printf("==========================================PDES Engine destroyed.==========================================\n");
+    printf("==========================================PDES Engine exited.==========================================\n");
+}
+void pdes_engine_destroy(PDESEngine *engine) {
+    // Notify neighbors that we are ending the simulation
+    notify_neighbours_of_end(engine);
+    if(engine->needs_to_checkpoint){
+        // Create bh 
+        if (!engine->boundry_checkpoint_bh){
+            engine->boundry_checkpoint_bh = qemu_bh_new(create_checkpoint_bh, true);
+        }
+        qemu_bh_schedule(engine->boundry_checkpoint_bh);
+    }else{
+        exit(0);
+    }
 }
 
 int pdes_engine_send(PDESEngine *engine, Message *msg) {
@@ -157,6 +177,11 @@ void process_message(PDESEngine *engine, Message *msg) {
     // printf("PDES Engine received message of type %u with timestamp %lu ns and len %u bytes.\n", msg->type, msg->ts_ns, msg->len);
 
     // TODO both drain start and and end are based on just one neighbor for now, need to generalize later
+    if (msg->type == END_OF_EMULATION){
+        printf("PDES Engine received end of emulation message, finishing simulation.\n");
+        // TODO add any cleanup needed here
+        pdes_engine_destroy(engine);
+    }
     if (msg->type==DRAIN_START){
         printf("PDES Engine received drain end message, marking drained as true.\n");
         assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");

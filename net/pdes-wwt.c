@@ -66,7 +66,6 @@ PDESWWT *pdes_engine_wwt_create(
     wwt->number_of_neighbors_finished = 0;
     wwt->should_sync = sync;
     wwt->has_finished = false;
-    wwt->boundry_checkpoint_bh = NULL;
 
     // Setup timer to call setup_wwt
     wwt->setup_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, (QEMUTimerCB *)setup_wwt, wwt);
@@ -250,22 +249,10 @@ int64_t get_quantum_time_local(int64_t quantum_round){
 }
 
 
-// TODO make this a field
-void create_checkpoint_bh(){
-    PDESWWT *wwt_engine = get_singleton_wwt_engine();
-
-    printf("WWT: Finished waiting for quanta for round %lu, starting checkpoint for this quantum.\n", wwt_engine->current_quantum_round - 1);
-    wwt_engine->engine->checkpoint_in_progress = false;
-    printf("WWT: Starting checkpoint for quantum %lu with snapshot name %s.\n", wwt_engine->current_quantum_round - 1, wwt_engine->engine->checkpoint_name);
-    save_snapshot(wwt_engine->engine->checkpoint_name, true, NULL, false, NULL, NULL);
-    printf("WWT: Finished checkpoint for quantum %lu, starting next quantum.\n", wwt_engine->current_quantum_round - 1);
-    wwt_engine->engine->needs_to_checkpoint = false;
-    wwt_engine->engine->notified_neighbors = false;
-    wwt_engine->engine->checkpoint_quantum_round = 0;
-    // delete and remove bh
-    qemu_bh_delete(wwt_engine->boundry_checkpoint_bh);
-    wwt_engine->boundry_checkpoint_bh = NULL;
+bool sync_checkpoint_check(){
+    return false;
 }
+
 void wwt_sync_check(){
     // Don't block but keep checking
 
@@ -273,7 +260,6 @@ void wwt_sync_check(){
     bool waiting = is_waiting_for_quanta(get_singleton_wwt_engine());
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     
-    printf("WWT: Checking if waiting for quanta for round %lu at virtual time %lu ns, waiting=%d\n", wwt_engine->current_quantum_round, current_time, waiting);
     while(waiting){
         // Poll for messages while waiting to avoid blocking message processing
         pdes_engine_poll(wwt_engine->engine);
@@ -290,33 +276,8 @@ void wwt_sync_check(){
         // get engine
         // TODO this part of checkpoint is to wwt specific, change later
         // TODO Add race condition lock so double checkpoint never happens (reason we double check needs_to_checkpoint)
-        if(wwt_engine->engine->needs_to_checkpoint){
-
-            assert(false && "No checkpointing in knottykraken yet.\n");
-            // Create bh and reschedule this again
-            if ((wwt_engine->current_quantum_round < wwt_engine->engine->checkpoint_quantum_round) && wwt_engine->should_sync){
-                printf("Checkpoint quantum round %lu is less than current quantum round %lu\n", wwt_engine->engine->checkpoint_quantum_round, wwt_engine->current_quantum_round);
-                // Just continue until we reach the quantum, so no return and no assert and no reschedule
-            }else if((wwt_engine->current_quantum_round == wwt_engine->engine->checkpoint_quantum_round) || (!wwt_engine->should_sync)){
-                if (wwt_engine->boundry_checkpoint_bh == NULL){
-                    wwt_engine->boundry_checkpoint_bh = qemu_bh_new(create_checkpoint_bh, NULL);
-                    qemu_bh_schedule(wwt_engine->boundry_checkpoint_bh);
-                    printf("===========================scheduled checkpoint for quantum round %lu===========================\n", wwt_engine->current_quantum_round);
-                }
-                else{
-                    printf("===========================already scheduled checkpoint, skipping===========================\n");
-                }
-                // Reschedule the quantum check so we don't progress until we checkpoint
-                // Making the wait longer as checkpoints are long by their nature and we can afford this overhead
-                // printf("Rescheduling quantum check to wait for checkpoint to finish for quantum round %lu\n", wwt_engine->current_quantum_round);
-                timer_mod(get_singleton_wwt_engine()->sync_check_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + 10000000);
-                return;
-            }else{
-                printf("Current quantum round %lu has already passed checkpoint quantum round %lu, this should not happen\n", wwt_engine->current_quantum_round, wwt_engine->engine->checkpoint_quantum_round);
-                assert(wwt_engine->engine->checkpoint_quantum_round <= wwt_engine->current_quantum_round && "Checkpoint quantum round should not be greater than current quantum round, if this assertion fails it means that there is an issue with how the checkpoint quantum round is being set or compared, needs to be fixed for correct checkpointing behavior");
-                return;
-            }
-            
+        if(sync_checkpoint_check()){
+            return;
         }
 
         timer_free(wwt_engine->sync_check_timer);
@@ -362,11 +323,12 @@ void wwt_sync_check(){
         // Transform it to local time
         int64_t next_quantum_time_local = next_quantum_time + wwt_engine->engine->first_sync_virtual_time;
         timer_mod(wwt_engine->quantum_timer, next_quantum_time_local);
-        printf("===================WWT: Finished quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round - 1, current_time, get_universal_virtual_time(wwt_engine->engine));
+        // printf("===================WWT: Finished quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round - 1, current_time, get_universal_virtual_time(wwt_engine->engine));
         // call play to resume
         pdes_play(wwt_engine->engine);
     }
 }
+
 
 void quanta_sync(PDESWWT *wwt_engine){
     // Sends sync, pauses and waits for others sync, then resumes

@@ -25,6 +25,7 @@ char *get_json_file_name(const char *base_name);
 int get_number_of_inflight_messages(void);
 
 bool validate_checkpoint(const char **check_point_name);
+void create_checkpoint_bh(bool exit_after);
 
 
 #endif
