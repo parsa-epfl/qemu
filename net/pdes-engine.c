@@ -113,13 +113,9 @@ void pdes_engine_destroy(PDESEngine *engine) {
     // Notify neighbors that we are ending the simulation
     notify_neighbours_of_end(engine);
     if(engine->needs_to_checkpoint){
-        // Create bh 
-        if (!engine->boundry_checkpoint_bh){
-            engine->boundry_checkpoint_bh = qemu_bh_new(create_checkpoint_bh, true);
-        }
-        qemu_bh_schedule(engine->boundry_checkpoint_bh);
+        assert(false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.");
     }else{
-        exit(0);
+        libqflex_stop("Simulation terminated by flexus.");
     }
 }
 
