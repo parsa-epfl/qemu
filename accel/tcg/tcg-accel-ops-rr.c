@@ -411,23 +411,8 @@ libqflex_step(CPUState* cpu)
         r = tcg_cpus_exec(cpu);
         if (icount_enabled()) {
             icount_process_data(cpu);
-            // Pooria: this is done for massive updates 
-            // Apply to qemu_icount immediately (no BQL needed, seqlock protects)
-            seqlock_write_lock(&timers_state.vm_clock_seqlock,
-                               &timers_state.vm_clock_lock);
-            int64_t count = icount_drain_executed();
-            qatomic_set_i64(&timers_state.qemu_icount,
-                            timers_state.qemu_icount + count);
-            seqlock_write_unlock(&timers_state.vm_clock_seqlock,
-                                 &timers_state.vm_clock_lock);
         }
         qemu_mutex_lock_iothread();
-
-        // Now with BQL held, fire any timers that hit the new icount
-        if (icount_enabled()) {
-            icount_handle_deadline();
-        }
-
 
         if (r == EXCP_ATOMIC) {
             qemu_mutex_unlock_iothread();
