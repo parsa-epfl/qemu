@@ -282,7 +282,21 @@ void wwt_sync_check(){
 
         timer_free(wwt_engine->sync_check_timer);
         wwt_engine->sync_check_timer = NULL;
+
         
+        PDESEngine *engine = wwt_engine->engine;
+        if(engine->master){
+            // TODO again dependant to 2 nodes
+            // TODO make this more general to not be reliant on conservative boundaries
+            // TODO factor it out like the checkpoint portion
+            if (engine->ready_to_exit_neighbors >= 1){
+                engine->permitted_to_exit = true;
+                // Send PERMISSION_TO_END_EMULATION message to neighbor
+                Message permission_to_end_msg = create_message(NULL, 0, PERMISSION_TO_END_EMULATION, get_universal_virtual_time(engine));
+                pdes_comm_send(engine->comm, &permission_to_end_msg);
+                printf("Master received intent to end emulation message, permitting neighbor to exit and sending permission message back.\n");
+            }
+        }
 
         // TODO number_of_neighbors_finished should be deprecated
         wwt_engine->number_of_neighbors_finished -= wwt_engine->number_of_neighbors;
@@ -332,9 +346,8 @@ void wwt_sync_check(){
 
 void quanta_sync(PDESWWT *wwt_engine){
     // Sends sync, pauses and waits for others sync, then resumes
-    // printf("WWT: Starting quantum sync at universal virtual time %lu ns.\n", get_universal_virtual_time(wwt_engine->engine));
     wwt_engine->finished_quantum = true;
-    printf("WWT: Sent sync for quantum %lu at virtual time %lu ns and universal time %lu ns.\n", wwt_engine->current_quantum_round, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), get_universal_virtual_time(wwt_engine->engine));
+    // printf("WWT: Sent sync for quantum %lu at virtual time %lu ns and universal time %lu ns.\n", wwt_engine->current_quantum_round, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), get_universal_virtual_time(wwt_engine->engine));
 
     // same using is_waiting_for_quanta as setup, as its the same logic
     
@@ -346,7 +359,7 @@ void quanta_sync(PDESWWT *wwt_engine){
     time_test = current_time;
     
     current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
+    // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
 
     // TODO DOCUMENT THIS MORE: for any operation between nodes that can have potential race conditions, it should be done after pause (to prevent race in node) but before send synnc (to prevent race in the other node)
     // TODO add a lock to engine and everything that needs it. notify neighbor is a good example
@@ -358,8 +371,6 @@ void quanta_sync(PDESWWT *wwt_engine){
         // Else you'd fill up buffer
         send_sync(wwt_engine);
     }
-
-
     // Create a timer to check sync status without blocking
     assert(wwt_engine->sync_check_timer == NULL && "Sync check timer should be NULL before creating");
     wwt_engine->sync_check_timer = timer_new_ns(QEMU_CLOCK_REALTIME, (QEMUTimerCB *)wwt_sync_check, wwt_engine);

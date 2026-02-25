@@ -7,7 +7,7 @@
 typedef struct PDESCommunicator PDESCommunicator;
 
 #define MAX_MSG_SIZE 2048
-#define RING_SIZE    8192
+#define RING_SIZE    4096
 
 #define MSG_TYPE_NORMAL 0
 #define MSG_TYPE_SYNC 1
@@ -17,6 +17,8 @@ typedef struct PDESCommunicator PDESCommunicator;
 #define DRAIN_END 4
 #define CHECKPOINT_INIT_STEP 5
 #define END_OF_EMULATION 6
+#define INTENT_TO_END_EMULATION 7
+#define PERMISSION_TO_END_EMULATION 8
 
 typedef struct {
     uint64_t ts_ns;       /* timestamp in nanoseconds */

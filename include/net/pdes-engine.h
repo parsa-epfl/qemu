@@ -75,6 +75,8 @@ struct PDESEngine {
 
     // exit changes
     bool notified_neighbors_for_exit;
+    int ready_to_exit_neighbors;
+    bool permitted_to_exit;
 };
 
 PDESEngine *pdes_engine_create(
@@ -180,6 +182,6 @@ int sync_count_get(GHashTable *table, uint64_t round);
 void finish_initiate_checkpoint(PDESEngine *engine);
 
 void destroy_strategy();
-
+bool can_stop(PDESEngine *engine);
 
 #endif

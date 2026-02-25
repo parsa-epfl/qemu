@@ -75,6 +75,8 @@ PDESEngine *pdes_engine_create(
     engine->notified_neighbors = false;
     engine->notified_neighbors_for_exit = false;
     engine->boundry_checkpoint_bh = NULL;
+    engine->ready_to_exit_neighbors = 0;
+    engine->permitted_to_exit = false;
 
 
 
@@ -125,6 +127,7 @@ void pdes_engine_destroy(PDESEngine *engine) {
     }else{
         destroy_strategy();
         libqflex_stop("Simulation terminated by flexus.");
+        exit(0);
     }
 }
 
@@ -182,6 +185,15 @@ void process_message(PDESEngine *engine, Message *msg) {
     // printf("PDES Engine received message of type %u with timestamp %lu ns and len %u bytes.\n", msg->type, msg->ts_ns, msg->len);
 
     // TODO both drain start and and end are based on just one neighbor for now, need to generalize later
+    if(msg->type == INTENT_TO_END_EMULATION){
+        if (engine->master){
+            engine->ready_to_exit_neighbors++;
+        }
+    }
+    if (msg->type == PERMISSION_TO_END_EMULATION){
+        printf("Received permission to end emulation message from master, setting permitted_to_exit to true.\n");
+        engine->permitted_to_exit = true;
+    }
     if (msg->type == END_OF_EMULATION){
         printf("PDES Engine received end of emulation message, finishing simulation.\n");
         // TODO add any cleanup needed here
@@ -369,4 +381,14 @@ void finish_initiate_checkpoint(PDESEngine *engine){
         assert (res == 0 && "Failed to send checkpoint initiation message to master");
         printf("Sent checkpoint initiation message to master, returning.\n");
     }
+}
+
+bool can_stop(PDESEngine *engine){
+    if (!engine->master){
+        // Send INTENT_TO_END_EMULATION message to master
+        // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
+        Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
+        pdes_comm_send(engine->comm, &intent_to_end_msg);
+    }
+    return engine->permitted_to_exit;
 }
