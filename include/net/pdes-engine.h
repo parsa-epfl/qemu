@@ -179,4 +179,7 @@ void sync_count_increment(GHashTable *table, uint64_t round);
 int sync_count_get(GHashTable *table, uint64_t round);
 void finish_initiate_checkpoint(PDESEngine *engine);
 
+void destroy_strategy();
+
+
 #endif

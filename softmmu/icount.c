@@ -356,6 +356,12 @@ void icount_start_warp_timer(void)
     clock = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL_RT);
     deadline = qemu_clock_deadline_ns_all(QEMU_CLOCK_VIRTUAL,
                                           ~QEMU_TIMER_ATTR_EXTERNAL);
+    // TODO this is a temporary measure, to fix overshooting when sleep=off, this is probably caused due to flexus/qemu interaction loop, but the result of this temp fix is valid
+    if (deadline < 10){
+        deadline = 0;
+    }else{
+        deadline -= 10;
+    }
     if (deadline < 0) {
         static bool notified;
         if (!icount_sleep && !notified) {

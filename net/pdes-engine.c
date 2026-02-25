@@ -103,11 +103,19 @@ void notify_neighbours_of_end(PDESEngine *engine){
     printf("==========================================Existing PDES Engine...==========================================\n");
     Message mssg = create_message(NULL, 0, END_OF_EMULATION, get_current_virtual_for_destroy_message(engine));
     pdes_comm_send(engine->comm, &mssg);
-    if (engine->comm) {
-        pdes_comm_destroy(engine->comm);
-    }
-    g_free(engine);
+    // g_free(engine);
     printf("==========================================PDES Engine exited.==========================================\n");
+}
+// TODO clean this up, destroying needs clean up
+void destroy_strategy(){
+    PDESWWT *wwt_engine = get_singleton_wwt_engine();
+    if (wwt_engine != NULL){
+        // remove the sync timer
+        if (wwt_engine->sync_check_timer != NULL){
+            timer_free(wwt_engine->sync_check_timer);
+            wwt_engine->sync_check_timer = NULL;
+        }
+    }
 }
 void pdes_engine_destroy(PDESEngine *engine) {
     // Notify neighbors that we are ending the simulation
@@ -115,6 +123,7 @@ void pdes_engine_destroy(PDESEngine *engine) {
     if(engine->needs_to_checkpoint){
         assert(false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.");
     }else{
+        destroy_strategy();
         libqflex_stop("Simulation terminated by flexus.");
     }
 }
