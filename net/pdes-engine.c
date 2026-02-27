@@ -389,6 +389,15 @@ bool can_stop(PDESEngine *engine){
         // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
         Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
         pdes_comm_send(engine->comm, &intent_to_end_msg);
+    }else{
+        if(engine->ready_to_exit_neighbors >= 1){
+            engine->permitted_to_exit = true;
+            // Send PERMISSION_TO_END_EMULATION message to neighbor
+            Message permission_to_end_msg = create_message(NULL, 0, PERMISSION_TO_END_EMULATION, get_universal_virtual_time(engine));
+            pdes_comm_send(engine->comm, &permission_to_end_msg);
+            printf("Master received intent to end emulation message, permitting neighbor to exit and sending permission message back.\n");
+        }
     }
+    engine->ready_to_exit = true;
     return engine->permitted_to_exit;
 }

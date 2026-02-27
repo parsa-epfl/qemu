@@ -289,7 +289,7 @@ void wwt_sync_check(){
             // TODO again dependant to 2 nodes
             // TODO make this more general to not be reliant on conservative boundaries
             // TODO factor it out like the checkpoint portion
-            if (engine->ready_to_exit_neighbors >= 1){
+            if (engine->ready_to_exit_neighbors >= 1 && engine->ready_to_exit){
                 engine->permitted_to_exit = true;
                 // Send PERMISSION_TO_END_EMULATION message to neighbor
                 Message permission_to_end_msg = create_message(NULL, 0, PERMISSION_TO_END_EMULATION, get_universal_virtual_time(engine));
@@ -337,7 +337,7 @@ void wwt_sync_check(){
         // Transform it to local time
         int64_t next_quantum_time_local = next_quantum_time + wwt_engine->engine->first_sync_virtual_time;
         timer_mod(wwt_engine->quantum_timer, next_quantum_time_local);
-        // printf("===================WWT: Finished quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round - 1, current_time, get_universal_virtual_time(wwt_engine->engine));
+        printf("===================WWT: Finished quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round - 1, current_time, get_universal_virtual_time(wwt_engine->engine));
         // call play to resume
         pdes_play(wwt_engine->engine);
     }
@@ -359,7 +359,7 @@ void quanta_sync(PDESWWT *wwt_engine){
     time_test = current_time;
     
     current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
+    printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
 
     // TODO DOCUMENT THIS MORE: for any operation between nodes that can have potential race conditions, it should be done after pause (to prevent race in node) but before send synnc (to prevent race in the other node)
     // TODO add a lock to engine and everything that needs it. notify neighbor is a good example

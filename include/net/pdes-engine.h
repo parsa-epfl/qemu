@@ -77,6 +77,7 @@ struct PDESEngine {
     bool notified_neighbors_for_exit;
     int ready_to_exit_neighbors;
     bool permitted_to_exit;
+    bool ready_to_exit;
 };
 
 PDESEngine *pdes_engine_create(
