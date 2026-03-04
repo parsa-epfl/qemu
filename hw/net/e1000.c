@@ -432,8 +432,9 @@ set_rx_control(E1000State *s, int index, uint32_t val)
     s->rxbuf_min_shift = ((val / E1000_RCTL_RDMTS_QUAT) & 3) + 1;
     DBGOUT(RX, "RCTL: %d, mac_reg[RCTL] = 0x%x\n", s->mac_reg[RDT],
            s->mac_reg[RCTL]);
+    // TODO this needs to be fixed, in parallel qemu virtual timer takes longer, so we can't afford as much time for flush_queue_timer, other wise packets will be dropped
     timer_mod(s->flush_queue_timer,
-              qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1000);
+              qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
 }
 
 static void
