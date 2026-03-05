@@ -187,6 +187,7 @@ void process_message(PDESEngine *engine, Message *msg) {
     // TODO both drain start and and end are based on just one neighbor for now, need to generalize later
     if(msg->type == INTENT_TO_END_EMULATION){
         if (engine->master){
+            printf("Received intent to end emulation message from neighbor, permitting neighbor to exit and sending permission message back.\n");
             engine->ready_to_exit_neighbors++;
         }
     }
@@ -389,13 +390,14 @@ bool can_stop(PDESEngine *engine){
         // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
         Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
         pdes_comm_send(engine->comm, &intent_to_end_msg);
+        printf("Sent intent to end emulation message to master, waiting for permission to exit.\n");
     }else{
         if(engine->ready_to_exit_neighbors >= 1){
             engine->permitted_to_exit = true;
             // Send PERMISSION_TO_END_EMULATION message to neighbor
             Message permission_to_end_msg = create_message(NULL, 0, PERMISSION_TO_END_EMULATION, get_universal_virtual_time(engine));
             pdes_comm_send(engine->comm, &permission_to_end_msg);
-            printf("Master received intent to end emulation message, permitting neighbor to exit and sending permission message back.\n");
+            printf("Allowing neighbor to exit as master and sending permission message back.\n");
         }
     }
     engine->ready_to_exit = true;

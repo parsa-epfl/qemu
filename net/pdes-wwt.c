@@ -163,7 +163,7 @@ void wwt_recivied_callback(void *opaque, Message *msg){
         //     assert(false && "Received sync message with timestamp too far in the future or past");
         // }
 
-        // printf("WWT Engine received sync message, marking one neighbor as finished for current quantum.\n");
+        printf("WWT Engine received sync message, marking one neighbor as finished for current quantum.\n");
 
         uint64_t msg_round = 0;
         if (msg->len >= sizeof(uint64_t)) {
@@ -184,7 +184,7 @@ void wwt_recivied_callback(void *opaque, Message *msg){
             assert (valid_round && "Received sync message for wrong quantum round, this should not happen");
         }
         sync_count_increment(wwt_engine->sync_counts, msg_round);
-        // printf("WWT: Sync received for round %lu (count now %d)\n", msg_round, sync_count_get(wwt_engine->sync_counts, msg_round));
+        printf("WWT: Sync received for round %lu (count now %d)\n", msg_round, sync_count_get(wwt_engine->sync_counts, msg_round));
 
     } else if (msg->type == MSG_TYPE_NORMAL){
         // Normal message, pass to final callback
@@ -260,11 +260,13 @@ void wwt_sync_check(){
     bool waiting = is_waiting_for_quanta(get_singleton_wwt_engine());
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     
+    printf("going into loop to check waiting status for quantum %lu at virtual time %lu ns and universal time %lu ns.\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
     while(waiting){
         // Poll for messages while waiting to avoid blocking message processing
         pdes_engine_poll(wwt_engine->engine);
         waiting = is_waiting_for_quanta(wwt_engine);
     }
+    printf("WWT: came out of waiting for quantum %lu \n", wwt_engine->current_quantum_round);
     if (waiting){
         // TODO remove this if
         // Reschedule check
@@ -352,6 +354,12 @@ void quanta_sync(PDESWWT *wwt_engine){
     // same using is_waiting_for_quanta as setup, as its the same logic
     
     // printf("===================WWT: going to pause for quantum %lu at virtual time %lu ns and universal time %lu ns.===================\n", wwt_engine->current_quantum_round, current_time, get_universal_virtual_time(wwt_engine->engine));
+    
+
+    if(wwt_engine->should_sync){
+        // Else you'd fill up buffer
+        send_sync(wwt_engine);
+    }
 
     pdes_pause(wwt_engine->engine);
     
@@ -366,11 +374,6 @@ void quanta_sync(PDESWWT *wwt_engine){
     pdes_engine_poll(wwt_engine->engine);
 
 
-
-    if(wwt_engine->should_sync){
-        // Else you'd fill up buffer
-        send_sync(wwt_engine);
-    }
     // Create a timer to check sync status without blocking
     assert(wwt_engine->sync_check_timer == NULL && "Sync check timer should be NULL before creating");
     wwt_engine->sync_check_timer = timer_new_ns(QEMU_CLOCK_REALTIME, (QEMUTimerCB *)wwt_sync_check, wwt_engine);
