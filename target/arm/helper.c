@@ -25,6 +25,10 @@
 #include "sysemu/tcg.h"
 #include "qapi/error.h"
 #include "qemu/guest-random.h"
+#ifndef CONFIG_USER_ONLY
+#include "qemu/qemu-plugin.h"
+#include "qemu/plugin-pf.h"
+#endif
 #ifdef CONFIG_TCG
 #include "semihosting/common-semi.h"
 #endif
@@ -4700,6 +4704,13 @@ static void tlbi_aa64_vmalle1is_write(CPUARMState *env, const ARMCPRegInfo *ri,
     CPUState *cs = env_cpu(env);
     int mask = vae1_tlbmask(env);
 
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(current_cpu->cpu_index, QEMU_PLUGIN_TLB_FLUSH_ALL, 0, 0, 0);
+    }
+#endif
+
     tlb_flush_by_mmuidx_all_cpus_synced(cs, mask);
 }
 
@@ -4708,6 +4719,13 @@ static void tlbi_aa64_vmalle1_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     CPUState *cs = env_cpu(env);
     int mask = vae1_tlbmask(env);
+
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(current_cpu->cpu_index, QEMU_PLUGIN_TLB_FLUSH_ALL, 0, 0, 0);
+    }
+#endif
 
     if (tlb_force_broadcast(env)) {
         tlb_flush_by_mmuidx_all_cpus_synced(cs, mask);
@@ -4729,6 +4747,13 @@ static void tlbi_aa64_alle1_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     CPUState *cs = env_cpu(env);
     int mask = alle1_tlbmask(env);
+
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(current_cpu->cpu_index, QEMU_PLUGIN_TLB_FLUSH_ALL, 0, 0, 0);
+    }
+#endif
 
     tlb_flush_by_mmuidx(cs, mask);
 }
@@ -4756,6 +4781,13 @@ static void tlbi_aa64_alle1is_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     CPUState *cs = env_cpu(env);
     int mask = alle1_tlbmask(env);
+
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(current_cpu->cpu_index, QEMU_PLUGIN_TLB_FLUSH_ALL, 0, 0, 0);
+    }
+#endif
 
     tlb_flush_by_mmuidx_all_cpus_synced(cs, mask);
 }
@@ -4815,6 +4847,19 @@ static void tlbi_aa64_vae1is_write(CPUARMState *env, const ARMCPRegInfo *ri,
     uint64_t pageaddr = sextract64(value << 12, 0, 56);
     int bits = vae1_tlbbits(env, pageaddr);
 
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(
+            current_cpu->cpu_index,
+            QEMU_PLUGIN_TLB_FLUSH_BY_VPN,
+            0,
+            pageaddr >> 12,
+            1
+        );
+    }
+#endif
+
     tlb_flush_page_bits_by_mmuidx_all_cpus_synced(cs, pageaddr, mask, bits);
 }
 
@@ -4831,6 +4876,19 @@ static void tlbi_aa64_vae1_write(CPUARMState *env, const ARMCPRegInfo *ri,
     int mask = vae1_tlbmask(env);
     uint64_t pageaddr = sextract64(value << 12, 0, 56);
     int bits = vae1_tlbbits(env, pageaddr);
+
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == cs);
+        pf_flushing_local_tlb_cb(
+            current_cpu->cpu_index,
+            QEMU_PLUGIN_TLB_FLUSH_BY_VPN,
+            0,
+            pageaddr >> 12,
+            1
+        );
+    }
+#endif
 
     if (tlb_force_broadcast(env)) {
         tlb_flush_page_bits_by_mmuidx_all_cpus_synced(cs, pageaddr, mask, bits);
@@ -4976,6 +5034,19 @@ static void do_rvae_write(CPUARMState *env, uint64_t value,
 
     range = tlbi_aa64_get_range(env, one_idx, value);
     bits = tlbbits_for_regime(env, one_idx, range.base);
+
+#ifndef CONFIG_USER_ONLY
+    if (pf_flushing_local_tlb_cb != NULL) {
+        assert(current_cpu == env_cpu(env));
+        pf_flushing_local_tlb_cb(
+            current_cpu->cpu_index,
+            QEMU_PLUGIN_TLB_FLUSH_BY_VPN,
+            0,
+            range.base >> 12,
+            range.length >> 12
+        );
+    }
+#endif
 
     if (synced) {
         tlb_flush_range_by_mmuidx_all_cpus_synced(env_cpu(env),

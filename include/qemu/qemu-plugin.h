@@ -673,4 +673,66 @@ uint64_t qemu_plugin_end_code(void);
  */
 uint64_t qemu_plugin_entry_code(void);
 
+/*
+ * PF_API marker for ParaFlex-specific plugin APIs.
+ * These APIs are marked for future reference when merging.
+ */
+#define PF_API
+#define AARCH64_ONLY_API
+
+/* TLB Flush types for the flushing callback */
+enum qemu_plugin_tlb_flush_type_t {
+    QEMU_PLUGIN_TLB_FLUSH_ALL = 0,
+    QEMU_PLUGIN_TLB_FLUSH_BY_ASID = 1,
+    QEMU_PLUGIN_TLB_FLUSH_BY_VPN = 2,
+    QEMU_PLUGIN_TLB_FLUSH_BY_ASID_AND_VPN = 3,
+};
+
+/* Snapshot format for savevm */
+enum qemu_plugin_snapshot_format_t {
+    QEMU_PLUGIN_SNAPSHOT_FORMAT_RAW,
+    QEMU_PLUGIN_SNAPSHOT_FORMAT_XDELTA,
+};
+
+/* Callback typedefs */
+typedef void (*qemu_plugin_vcpu_branch_resolved_cb_t)(
+    unsigned int vcpu_index, uint64_t pc, uint64_t target, uint32_t hint_flags);
+
+typedef void (*qemu_plugin_snapshot_cb_t)(const char *name);
+
+typedef void (*qemu_plugin_event_loop_poll_cb_t)(void);
+
+typedef bool (*qemu_plugin_periodic_check_cb_t)(void);
+
+typedef void (*qemu_plugin_flushing_local_tlb_t)(
+    uint32_t vcpu_idx,
+    enum qemu_plugin_tlb_flush_type_t mode,
+    uint64_t asid,
+    uint64_t vpn,
+    uint64_t number_of_pages);
+
+typedef void (*qemu_plugin_save_statistics_callback_t)(const char *file_name);
+
+/* PF_API Function declarations */
+PF_API uint64_t qemu_plugin_get_vcpu_vtime(uint32_t cpu_idx);
+PF_API uint64_t qemu_plugin_read_pc_vpn(void);
+PF_API void qemu_plugin_read_physical_memory(uint64_t physical_address,
+                                               uint64_t size, void *buf);
+PF_API uint64_t qemu_plugin_read_tcr_el1(void);
+PF_API uint64_t qemu_plugin_read_ttbr_el1(int which_ttbr);
+PF_API bool qemu_plugin_register_event_loop_poll_cb(
+    qemu_plugin_event_loop_poll_cb_t cb);
+PF_API bool qemu_plugin_register_flushing_local_tlb_cb(
+    qemu_plugin_flushing_local_tlb_t cb);
+PF_API bool qemu_plugin_register_loadvm_cb(qemu_plugin_snapshot_cb_t cb);
+PF_API bool qemu_plugin_register_periodic_check_cb(
+    qemu_plugin_periodic_check_cb_t cb);
+PF_API bool qemu_plugin_register_save_statistics_callback(
+    qemu_plugin_save_statistics_callback_t cb);
+PF_API bool qemu_plugin_register_savevm_cb(qemu_plugin_snapshot_cb_t cb);
+PF_API bool qemu_plugin_register_vcpu_branch_resolved_cb(
+    qemu_plugin_vcpu_branch_resolved_cb_t cb);
+PF_API void qemu_plugin_savevm(const char *name,
+                                 enum qemu_plugin_snapshot_format_t format);
+
 #endif /* QEMU_QEMU_PLUGIN_H */

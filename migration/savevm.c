@@ -78,6 +78,9 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
+#include "qemu/qemu-plugin.h"
+#include "qemu/plugin-pf.h"
+
 void
 libqflex_save_ckpt(char const * const dirname); // defined in libqflex.c
 
@@ -3470,6 +3473,10 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         }
     }
 
+    if (pf_savevm_cb) {
+        pf_savevm_cb(sn->name);
+    }
+
     /* The bdrv_all_create_snapshot() call that follows acquires the AioContext
      * for itself.  BDRV_POLL_WHILE() does not support nested locking because
      * it only releases the lock once.  Therefore synchronous I/O will deadlock
@@ -4197,6 +4204,10 @@ bool load_snapshot(const char *name, const char *vmstate,
             strcpy(incremental_snapshot_context.base_name, sn.name);
             incremental_snapshot_context.index = 0;
         }
+    }
+
+    if (pf_loadvm_cb) {
+        pf_loadvm_cb(sn.name);
     }
 
     aio_context_release(aio_context);

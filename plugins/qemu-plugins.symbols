@@ -42,4 +42,17 @@
   qemu_plugin_tb_vaddr;
   qemu_plugin_uninstall;
   qemu_plugin_vcpu_for_each;
+  qemu_plugin_get_vcpu_vtime;
+  qemu_plugin_read_pc_vpn;
+  qemu_plugin_read_physical_memory;
+  qemu_plugin_read_tcr_el1;
+  qemu_plugin_read_ttbr_el1;
+  qemu_plugin_register_event_loop_poll_cb;
+  qemu_plugin_register_flushing_local_tlb_cb;
+  qemu_plugin_register_loadvm_cb;
+  qemu_plugin_register_periodic_check_cb;
+  qemu_plugin_register_save_statistics_callback;
+  qemu_plugin_register_savevm_cb;
+  qemu_plugin_register_vcpu_branch_resolved_cb;
+  qemu_plugin_savevm;
 };
