@@ -35,5 +35,7 @@ extern qemu_plugin_flushing_local_tlb_t pf_flushing_local_tlb_cb;
 // The callback for saving statistics.
 extern qemu_plugin_save_statistics_callback_t pf_save_statistics_cb;
 
+/* Global statistics array exposed to plugins - aligned to prevent false sharing */
+extern struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES];
 
 #endif

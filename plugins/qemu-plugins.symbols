@@ -55,4 +55,5 @@
   qemu_plugin_register_savevm_cb;
   qemu_plugin_register_vcpu_branch_resolved_cb;
   qemu_plugin_savevm;
+  qemu_plugin_get_exposed_statistics;
 };
