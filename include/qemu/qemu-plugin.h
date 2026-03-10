@@ -713,6 +713,8 @@ typedef void (*qemu_plugin_flushing_local_tlb_t)(
 
 typedef void (*qemu_plugin_save_statistics_callback_t)(const char *file_name);
 
+typedef void(*qemu_plugin_record_statistics_cb_t)(uint64_t core_idx, uint64_t what_statistics, uint64_t increment);
+
 /* PF_API Function declarations */
 PF_API uint64_t qemu_plugin_get_vcpu_vtime(uint32_t cpu_idx);
 PF_API uint64_t qemu_plugin_read_pc_vpn(void);
@@ -772,5 +774,18 @@ struct __attribute__((aligned(64))) qemu_plugin_exposed_statistics {
  * Note: Statistics are zeroed when plugins are loaded.
  */
 struct qemu_plugin_exposed_statistics *qemu_plugin_get_exposed_statistics(uint32_t core_idx);
+
+/**
+ * qemu_plugin_record_statistics() - Record a statistic increment for a core
+ * @core_idx: The CPU core index (0 to QEMU_PLUGIN_MAX_CORES-1)
+ * @what_statistics: The statistic type to increment
+ * @increment: The amount to increment the statistic by
+ *
+ * This function records a statistic increment for the specified core.
+ * It is intended for use by plugins that do not have access to the
+ * exposed statistics structure directly.
+ */
+PF_API bool qemu_plugin_register_record_statistics_cb(qemu_plugin_record_statistics_cb_t cb);
+
 
 #endif /* QEMU_QEMU_PLUGIN_H */

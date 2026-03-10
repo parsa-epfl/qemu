@@ -39,6 +39,7 @@ qemu_plugin_event_loop_poll_cb_t pf_el_pool_cb = NULL;
 qemu_plugin_periodic_check_cb_t pf_periodic_check_cb = NULL;
 qemu_plugin_flushing_local_tlb_t pf_flushing_local_tlb_cb = NULL;
 qemu_plugin_save_statistics_callback_t pf_save_statistics_cb = NULL;
+qemu_plugin_record_statistics_cb_t pf_record_statistics_cb = NULL;
 
 /* Global statistics array exposed to plugins - aligned to prevent false sharing */
 struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES] __attribute__((aligned(64)));
@@ -160,12 +161,24 @@ bool qemu_plugin_register_flushing_local_tlb_cb(
 bool qemu_plugin_register_save_statistics_callback(
     qemu_plugin_save_statistics_callback_t cb)
 {
-    if (pf_save_statistics_cb) {
-        return false;
-    }
+  if (pf_save_statistics_cb) {
+    return false;
+  }
 
-    pf_save_statistics_cb = cb;
-    return true;
+  pf_save_statistics_cb = cb;
+  return true;
 }
+
+bool qemu_plugin_register_record_statistics_cb(
+    qemu_plugin_record_statistics_cb_t cb) {
+  if (pf_record_statistics_cb) {
+    return false;
+  }
+
+  pf_record_statistics_cb = cb;
+  return true;
+}
+
+
 
 #endif /* CONFIG_USER_ONLY */

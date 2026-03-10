@@ -38,4 +38,12 @@ extern qemu_plugin_save_statistics_callback_t pf_save_statistics_cb;
 /* Global statistics array exposed to plugins - aligned to prevent false sharing */
 extern struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES];
 
+extern qemu_plugin_record_statistics_cb_t pf_record_statistics_cb;
+
+void inline record_statistics_to_plugin(uint64_t core_idx, uint64_t event_identifier, uint64_t increment) {
+    if (pf_record_statistics_cb) {
+        pf_record_statistics_cb(core_idx, event_identifier, increment);
+    }
+}
+
 #endif
