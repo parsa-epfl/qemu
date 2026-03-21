@@ -194,6 +194,11 @@ void process_message(PDESEngine *engine, Message *msg) {
     if (msg->type == PERMISSION_TO_END_EMULATION){
         printf("Received permission to end emulation message from master, setting permitted_to_exit to true.\n");
         engine->permitted_to_exit = true;
+        // TODO to test my theory for the other node being slow
+        if (!engine->master){
+            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!doing test can stop \n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            can_stop(engine);
+        }
     }
     if (msg->type == END_OF_EMULATION){
         printf("PDES Engine received end of emulation message, finishing simulation.\n");
@@ -258,7 +263,7 @@ void schedule_poll(void *opaque){
 void pdes_pause_bh(void *opaque){
     PDESEngine *engine = opaque;
 
-    vm_stop(RUN_STATE_SAVE_VM);
+    vm_stop(RUN_STATE_PAUSED);
     // Remove the bottom half
     qemu_bh_delete(engine->pause_bh);
     engine->pause_bh = NULL;
@@ -268,7 +273,6 @@ void pdes_pause(void *opaque){
     PDESEngine *engine = opaque;
     
 
-    engine->paused = true;
     // Create bh
     // Make sure bh is empty
     // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to pause, this should not happen");
@@ -292,7 +296,6 @@ void pdes_pause(void *opaque){
     }
     
 
-    current_cpu->stop = true;
     cpu_exit(current_cpu);
     if (flexus_api.pause != NULL){
         flexus_api.pause();
@@ -301,7 +304,7 @@ void pdes_pause(void *opaque){
     }
 
 
-
+    engine->paused = true;
     return;
 }
 
@@ -309,7 +312,6 @@ void pdes_pause(void *opaque){
 void pdes_play(void *opaque){
     // TODO add doc where this can be called from (not virt)
     PDESEngine *engine = opaque;
-    engine->paused = false;
     // Create bh
     // Make sure bh is empty
     // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to play, this should not happen");
@@ -322,6 +324,7 @@ void pdes_play(void *opaque){
     }else if(flexus_api.stop != NULL){
         assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
     }
+    engine->paused = false;
     return;
 }
 
@@ -387,17 +390,26 @@ void finish_initiate_checkpoint(PDESEngine *engine){
 bool can_stop(PDESEngine *engine){
     if (!engine->master){
         // Send INTENT_TO_END_EMULATION message to master
+        // TODO make all these bool flags atomic:
+        
         // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
-        Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
-        pdes_comm_send(engine->comm, &intent_to_end_msg);
-        printf("Sent intent to end emulation message to master, waiting for permission to exit.\n");
+        if(!engine->notified_neighbors_for_exit){
+            Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
+            pdes_comm_send(engine->comm, &intent_to_end_msg);
+            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Sent intent to end emulation message to master, waiting for permission to exit.!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            engine->notified_neighbors_for_exit = true;
+        }
     }else{
-        if(engine->ready_to_exit_neighbors >= 1){
+
+        bool can_end = engine->ready_to_exit_neighbors >= 1;
+        // TODO to test my theory for the other node being slow
+        can_end = true;
+        if(can_end){
             engine->permitted_to_exit = true;
             // Send PERMISSION_TO_END_EMULATION message to neighbor
             Message permission_to_end_msg = create_message(NULL, 0, PERMISSION_TO_END_EMULATION, get_universal_virtual_time(engine));
             pdes_comm_send(engine->comm, &permission_to_end_msg);
-            printf("Allowing neighbor to exit as master and sending permission message back.\n");
+            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Allowing neighbor to exit as master and sending permission message back.!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         }
     }
     engine->ready_to_exit = true;
