@@ -128,7 +128,7 @@ void send_sync(PDESWWT *wwt_engine){
     uint64_t round = wwt_engine->current_quantum_round;
     Message sync_msg = create_message((uint8_t *)&round, sizeof(round), MSG_TYPE_SYNC, get_current_virtual_for_sync_message(wwt_engine->engine));
     pdes_engine_send(wwt_engine->engine, &sync_msg);
-    // printf("WWT: Sent sync message at virtual time %lu ns.\n", get_universal_virtual_time(wwt_engine->engine));
+    printf("WWT: Sent sync message for round %lu at virtual time %lu ns.\n", round, get_universal_virtual_time(wwt_engine->engine));
 }
 void finish_quantum(PDESWWT *wwt_engine){
     send_sync(wwt_engine);

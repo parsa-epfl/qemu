@@ -39,6 +39,10 @@
 #include "sysemu/cpu-timers.h"
 #include "sysemu/cpu-throttle.h"
 #include "timers-state.h"
+#ifdef CONFIG_LIBQFLEX
+#include "middleware/libqflex/libqflex-legacy-api.h"
+#endif
+
 
 /*
  * ICOUNT: Instruction Counter
@@ -326,7 +330,9 @@ void icount_start_warp_timer(void)
     }
 
     if (replay_mode != REPLAY_MODE_PLAY) {
-        if (!all_cpu_threads_idle()) {
+        // TODO : this is running on main loop so no race condition but later on we should add locks for flags on flexus_api
+        // If all cpus are paused, but flexus is not, icount will be progressed by it so there is no ned for warping due to hlt
+        if (!all_cpu_threads_idle() && flexus_api.is_paused != NULL && flexus_api.is_paused()) {
             return;
         }
 
@@ -360,7 +366,7 @@ void icount_start_warp_timer(void)
     if (deadline < 10){
         deadline = 0;
     }else{
-        deadline -= 10;
+        deadline = 1;
     }
     if (deadline < 0) {
         static bool notified;

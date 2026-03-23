@@ -194,11 +194,6 @@ void process_message(PDESEngine *engine, Message *msg) {
     if (msg->type == PERMISSION_TO_END_EMULATION){
         printf("Received permission to end emulation message from master, setting permitted_to_exit to true.\n");
         engine->permitted_to_exit = true;
-        // TODO to test my theory for the other node being slow
-        if (!engine->master){
-            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!doing test can stop \n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-            can_stop(engine);
-        }
     }
     if (msg->type == END_OF_EMULATION){
         printf("PDES Engine received end of emulation message, finishing simulation.\n");
@@ -289,14 +284,6 @@ void pdes_pause(void *opaque){
 
     
 
-    if (current_cpu == NULL){
-        // This can happen if we call pause before the CPU is created, in that case we just return and do nothing as there is nothing to pause yet
-        // printf("pdes_pause called but current_cpu is NULL, this can happen if pause is called before CPU is created, just returning without pausing.\n");
-        return;
-    }
-    
-
-    cpu_exit(current_cpu);
     if (flexus_api.pause != NULL){
         flexus_api.pause();
     }else if(flexus_api.stop != NULL){
@@ -393,17 +380,15 @@ bool can_stop(PDESEngine *engine){
         // TODO make all these bool flags atomic:
         
         // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
-        if(!engine->notified_neighbors_for_exit){
+        if(!engine->notified_neighbors_for_exit){   
             Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
             pdes_comm_send(engine->comm, &intent_to_end_msg);
-            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Sent intent to end emulation message to master, waiting for permission to exit.!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            printf("Sent intent to end emulation message to master, waiting for permission to exit.\n");
             engine->notified_neighbors_for_exit = true;
         }
     }else{
 
         bool can_end = engine->ready_to_exit_neighbors >= 1;
-        // TODO to test my theory for the other node being slow
-        can_end = true;
         if(can_end){
             engine->permitted_to_exit = true;
             // Send PERMISSION_TO_END_EMULATION message to neighbor
