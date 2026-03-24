@@ -750,15 +750,18 @@ PF_API void qemu_plugin_savevm(const char *name,
  * The structure is aligned to 64 bytes to prevent false sharing between cores.
  */
 struct __attribute__((aligned(64))) qemu_plugin_exposed_statistics {
-    uint64_t instruction;          /**< Total instructions executed */
-    uint64_t instruction_access;   /**< Instruction fetch accesses */
-    uint64_t data_access;          /**< Data memory accesses */
-    uint64_t private_icache_miss;  /**< Private instruction cache misses */
-    uint64_t private_dcache_miss;  /**< Private data cache misses */
-    uint64_t shared_cache_miss;    /**< Shared (LLC) cache misses */
-    uint64_t branch_count;         /**< Branch instructions executed */
-    uint64_t bp_miss;              /**< Branch prediction misses */
-    uint64_t tlb_miss;             /**< TLB misses */
+    uint64_t private_icache_miss;           /**< Private instruction cache misses (offset 0) */
+    uint64_t private_dcache_miss_load_ptw;  /**< Private dcache misses: load + PTW combined (offset 8) */
+    uint64_t private_dcache_miss_store;     /**< Private dcache misses due to store (offset 16) */
+    uint64_t shared_cache_miss;             /**< Shared (LLC) cache misses (offset 24) */
+    uint64_t bp_miss;                       /**< Branch prediction misses (offset 32) */
+    uint64_t drain_pipeline;               /**< Pipeline drain events (ISB, exceptions) (offset 40) */
+    uint64_t drain_store_buffer;           /**< Store buffer drain events (DSB, acquire) (offset 48) */
+    uint64_t read_noc_hop;                 /**< NoC hop count for data reads (offset 56) */
+    uint64_t write_noc_hop;               /**< NoC hop count for data writes (offset 64) */
+    uint64_t ifetch_noc_hop;              /**< NoC hop count for instruction fetches (offset 72) */
+    uint64_t instruction_u;               /**< User-mode instructions executed (offset 80) */
+    uint64_t instruction_k;               /**< Kernel-mode instructions executed (offset 88) */
 };
 
 /**
