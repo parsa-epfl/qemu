@@ -39,6 +39,7 @@
 #include "sysemu/cpu-timers.h"
 #include "sysemu/cpu-throttle.h"
 #include "timers-state.h"
+#include "net/pdes-engine.h"
 #ifdef CONFIG_LIBQFLEX
 #include "middleware/libqflex/libqflex-legacy-api.h"
 #endif
@@ -332,7 +333,19 @@ void icount_start_warp_timer(void)
     if (replay_mode != REPLAY_MODE_PLAY) {
         // TODO : this is running on main loop so no race condition but later on we should add locks for flags on flexus_api
         // If all cpus are paused, but flexus is not, icount will be progressed by it so there is no ned for warping due to hlt
-        if (!all_cpu_threads_idle() && flexus_api.is_paused != NULL && flexus_api.is_paused()) {
+        bool flexus_driving = flexus_api.is_paused != NULL && !flexus_api.is_paused();
+        bool pdes_paused = false;
+        PDESEngine* engine = get_singleton_engine();
+        if (engine != NULL) {
+            pdes_paused = engine->paused;
+        }
+        if (!all_cpu_threads_idle()) {
+            return;
+        }
+
+        // if any core is awake, or flexus is driving or that we are in pause, no need to warp
+        if (flexus_driving || pdes_paused){
+            qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
             return;
         }
 
@@ -362,12 +375,7 @@ void icount_start_warp_timer(void)
     clock = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL_RT);
     deadline = qemu_clock_deadline_ns_all(QEMU_CLOCK_VIRTUAL,
                                           ~QEMU_TIMER_ATTR_EXTERNAL);
-    // TODO this is a temporary measure, to fix overshooting when sleep=off, this is probably caused due to flexus/qemu interaction loop, but the result of this temp fix is valid
-    if (deadline < 10){
-        deadline = 0;
-    }else{
-        deadline = 1;
-    }
+
     if (deadline < 0) {
         static bool notified;
         if (!icount_sleep && !notified) {

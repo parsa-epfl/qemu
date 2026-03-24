@@ -277,6 +277,14 @@ void pdes_pause(void *opaque){
     // qemu_system_vmstop_request_prepare();
     // qemu_system_vmstop_request(RUN_STATE_PAUSED);
 
+
+    engine->paused = true;
+    if (flexus_api.pause != NULL){
+        flexus_api.pause();
+    }else if(flexus_api.stop != NULL){
+        assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
+    }
+
     assert(engine->pause_bh == NULL);
     engine->pause_bh = qemu_bh_new(pdes_pause_bh, engine);
     qemu_bh_schedule(engine->pause_bh);
@@ -284,14 +292,8 @@ void pdes_pause(void *opaque){
 
     
 
-    if (flexus_api.pause != NULL){
-        flexus_api.pause();
-    }else if(flexus_api.stop != NULL){
-        assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
-    }
+    
 
-
-    engine->paused = true;
     return;
 }
 
