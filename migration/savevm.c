@@ -3745,6 +3745,8 @@ static void *uffd_on_demand_thread(void *main_ram) {
             fclose(checkpoint_file);
         }
 
+        record_statistics_to_plugin(0, 5, 1);
+
     }
 }
 
