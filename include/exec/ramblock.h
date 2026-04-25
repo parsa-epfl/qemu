@@ -76,10 +76,7 @@ struct RAMBlock {
      */
     ram_addr_t postcopy_length;
 
-    // loaded bitmap
-    char *on_demand_file_name;
-    GHashTable *on_demand_index;
-    GHashTable *on_demand_base_sparse_index; // Maps page_offset -> file_offset for sparse base
+    /* uffd handler state for bxdb-backed on-demand snapshot loads */
     int on_demand_uffd_fd;
     uint64_t on_demand_uffd_ioctls;
     uint8_t *on_demand_ref_host;

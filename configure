@@ -748,6 +748,14 @@ for opt do
   ;;
   --with-suffix=*) qemu_suffix="$optarg"
   ;;
+  --with-bxdb=*)
+    bxdb_abs_path=$(cd "$optarg" 2>/dev/null && pwd) || \
+        error_exit "Directory $optarg does not exist (--with-bxdb)"
+    if test ! -f "$bxdb_abs_path/c-test/bxdb.h"; then
+        error_exit "No bxdb.h found under $bxdb_abs_path/c-test/"
+    fi
+    meson_option_add "-Dbxdb_path=$bxdb_abs_path"
+  ;;
   --host=*|--build=*|\
   --disable-dependency-tracking|\
   --sbindir=*|--sharedstatedir=*|\
