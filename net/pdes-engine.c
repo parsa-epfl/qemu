@@ -84,8 +84,7 @@ PDESEngine *pdes_engine_create(
     // Schedule it IMMEDIATELY
 
     // TODO look into optimizing this
-    timer_mod(engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+50000); // 5 microseconds
-
+    
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     // TODO remove this field
     engine->first_sync_time = current_time;

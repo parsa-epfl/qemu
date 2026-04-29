@@ -122,6 +122,9 @@ void setup_wwt(PDESWWT *wwt_engine){
     // TODO address the bug that may be caused without sync (as you can see multiple sync messages at once)
     wwt_engine->number_of_neighbors_finished = 0;
     printf("WWT: Setup starting at virtual time %lu ns and universal time off: %lu ns.\n", current_time, get_universal_virtual_time(wwt_engine->engine));
+    // TODO increasing this for when resource contention can happen when running things in parallel, needs a better cleaner solution
+    timer_mod(wwt_engine->engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+500000000); // 500 milliseconds, just the first time
+
 }
 
 void send_sync(PDESWWT *wwt_engine){
