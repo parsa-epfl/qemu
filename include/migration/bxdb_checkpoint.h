@@ -51,12 +51,25 @@ int bxdb_ckpt_load_bulk(const char *name,
                         Error **errp);
 
 /*
- * On-demand load (on_demand == 1 or 2). Opens a timing DB; the uffd handler
- * then calls bxdb_ckpt_fetch_page for each page fault. Must be paired with
+ * On-demand load (on_demand != 0). Opens a timing DB; the uffd handler then
+ * calls bxdb_ckpt_fetch_page for each page fault. Must be paired with
  * bxdb_ckpt_ondemand_close once the VM is shut down.
+ *
+ * memory_size is the size of the guest RAM region the timing DB will serve.
+ * It is required so that the implementation can size its test-mode reference
+ * buffer; in non-test builds it is otherwise unused.
  */
-int  bxdb_ckpt_ondemand_open(const char *name, Error **errp);
+int  bxdb_ckpt_ondemand_open(const char *name, uint64_t memory_size,
+                             Error **errp);
 bool bxdb_ckpt_fetch_page(uint64_t offset, void *buffer);
+
+/*
+ * Test-mode verification hook. Called by the uffd handler after each page is
+ * materialised; in test mode it compares the page against a zstd-decompressed
+ * reference and aborts on mismatch. No-op when test mode is disabled.
+ */
+void bxdb_ckpt_verify_page(uint64_t offset, const void *buffer);
+
 void bxdb_ckpt_ondemand_close(void);
 
 void bxdb_ckpt_shutdown(void);
@@ -92,13 +105,15 @@ static inline int bxdb_ckpt_load_bulk(const char *name,
     return -ENOTSUP;
 }
 
-static inline int bxdb_ckpt_ondemand_open(const char *name, Error **errp)
+static inline int bxdb_ckpt_ondemand_open(const char *name,
+                                          uint64_t memory_size, Error **errp)
 {
     error_setg(errp, "QEMU was built without --with-bxdb");
     return -ENOTSUP;
 }
 
 static inline bool bxdb_ckpt_fetch_page(uint64_t offset, void *buffer) { return false; }
+static inline void bxdb_ckpt_verify_page(uint64_t offset, const void *buffer) { }
 static inline void bxdb_ckpt_ondemand_close(void) { }
 static inline void bxdb_ckpt_shutdown(void) { }
 

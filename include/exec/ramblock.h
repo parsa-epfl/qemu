@@ -79,7 +79,6 @@ struct RAMBlock {
     /* uffd handler state for bxdb-backed on-demand snapshot loads */
     int on_demand_uffd_fd;
     uint64_t on_demand_uffd_ioctls;
-    uint8_t *on_demand_ref_host;
     pthread_t on_demand_uffd_thread;
 };
 #endif

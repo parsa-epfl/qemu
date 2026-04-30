@@ -3291,15 +3291,7 @@ static void *uffd_on_demand_thread(void *main_ram)
             memset(buffer, 0, page_size);
         }
 
-        if (ram->on_demand_ref_host) {
-            uint8_t *ref_offset = (uint8_t *)(offset + (uint64_t)ram->on_demand_ref_host);
-            for (uint i = 0; i < page_size; ++i) {
-                if (buffer[i] != ref_offset[i]) {
-                    printf("Mismatch with reference page at offset %lu\n", offset + i);
-                    assert(false && "The page is not the same as the reference page");
-                }
-            }
-        }
+        bxdb_ckpt_verify_page(offset, buffer);
 
         assert(uffd_copy_page(
             ram->on_demand_uffd_fd,
@@ -3408,12 +3400,10 @@ bool load_snapshot(const char *name, const char *vmstate,
     }
 
     bool IS_ON_DEMAND_LOADING = is_incremental && on_demand;
-    bool ON_DEMAND_CHECKING = IS_ON_DEMAND_LOADING && on_demand == 2;
     RAMBlock *main_ram = get_main_memory();
-    uint8_t *memory_addr_to_load = main_ram->host;
 
     if (IS_ON_DEMAND_LOADING) {
-        ret = bxdb_ckpt_ondemand_open(name, errp);
+        ret = bxdb_ckpt_ondemand_open(name, main_ram->used_length, errp);
         if (ret < 0) {
             goto err_drain;
         }
@@ -3432,12 +3422,6 @@ bool load_snapshot(const char *name, const char *vmstate,
             &main_ram->on_demand_uffd_ioctls
         ) == 0);
 
-        if (ON_DEMAND_CHECKING) {
-            main_ram->on_demand_ref_host = qemu_anon_ram_alloc(
-                main_ram->used_length, &main_ram->mr->align, false, true);
-            memory_addr_to_load = main_ram->on_demand_ref_host;
-        }
-
         assert(pthread_create(
             &main_ram->on_demand_uffd_thread,
             NULL,
@@ -3446,8 +3430,8 @@ bool load_snapshot(const char *name, const char *vmstate,
         ) == 0);
     }
 
-    if (is_incremental && !(IS_ON_DEMAND_LOADING && !ON_DEMAND_CHECKING)) {
-        ret = bxdb_ckpt_load_bulk(name, memory_addr_to_load,
+    if (is_incremental && !IS_ON_DEMAND_LOADING) {
+        ret = bxdb_ckpt_load_bulk(name, main_ram->host,
                                   main_ram->used_length, errp);
         if (ret < 0) {
             goto err_drain;
