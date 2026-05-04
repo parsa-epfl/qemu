@@ -784,6 +784,37 @@ struct __attribute__((aligned(64))) qemu_plugin_exposed_statistics {
 struct qemu_plugin_exposed_statistics *qemu_plugin_get_exposed_statistics(uint32_t core_idx);
 
 /**
+ * struct qemu_plugin_timing_info - Host-side timing breakdown for checkpoint operations
+ *
+ * This structure accumulates wall-clock time (CLOCK_MONOTONIC_RAW)
+ * spent on checkpoint save/load operations and their sub-components,
+ * broken down into RAM (bxdb), uArch state (plugin callback), and total.
+ * All values are in nanoseconds. The structure is aligned to 64 bytes
+ * to prevent false sharing.
+ *
+ * Plugins read this structure via qemu_plugin_get_timing_info()
+ * and may print it as a final timing report at simulation exit.
+ */
+struct __attribute__((aligned(64))) qemu_plugin_timing_info {
+    uint64_t total_save_time_ns;
+    uint64_t total_load_time_ns;
+    uint64_t save_memory_state_time_ns;
+    uint64_t load_memory_state_time_ns;
+    uint64_t save_uarch_state_time_ns;
+    uint64_t load_uarch_state_time_ns;
+    uint64_t _padding[2];
+};
+
+/**
+ * qemu_plugin_get_timing_info() - Get pointer to the global timing info
+ *
+ * Returns a pointer to the shared timing information structure.
+ * The structure is zero-initialised when QEMU starts and accumulates
+ * time across all checkpoint operations during the simulation.
+ */
+struct qemu_plugin_timing_info *qemu_plugin_get_timing_info(void);
+
+/**
  * qemu_plugin_record_statistics() - Record a statistic increment for a core
  * @core_idx: The CPU core index (0 to QEMU_PLUGIN_MAX_CORES-1)
  * @what_statistics: The statistic type to increment

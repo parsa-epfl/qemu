@@ -38,6 +38,9 @@ extern qemu_plugin_save_statistics_callback_t pf_save_statistics_cb;
 /* Global statistics array exposed to plugins - aligned to prevent false sharing */
 extern struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES];
 
+/* Global timing info for host-side checkpoint time breakdown */
+extern struct qemu_plugin_timing_info g_timing_info;
+
 extern qemu_plugin_record_statistics_cb_t pf_record_statistics_cb;
 
 inline void record_statistics_to_plugin(uint64_t core_idx, uint64_t event_identifier, uint64_t increment) {

@@ -44,12 +44,20 @@ qemu_plugin_record_statistics_cb_t pf_record_statistics_cb = NULL;
 /* Global statistics array exposed to plugins - aligned to prevent false sharing */
 struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES] __attribute__((aligned(64)));
 
+/* Global timing info for host-side checkpoint time breakdown */
+struct qemu_plugin_timing_info g_timing_info __attribute__((aligned(64))) = {0};
+
 struct qemu_plugin_exposed_statistics *qemu_plugin_get_exposed_statistics(uint32_t core_idx)
 {
     if (core_idx >= QEMU_PLUGIN_MAX_CORES) {
         return NULL;
     }
     return &g_exposed_statistics[core_idx];
+}
+
+struct qemu_plugin_timing_info *qemu_plugin_get_timing_info(void)
+{
+    return &g_timing_info;
 }
 
 uint64_t qemu_plugin_read_ttbr_el1(int which_ttbr)
