@@ -25,7 +25,7 @@
  * full guest RAM compressed with zstd — and every load decompresses that blob
  * to verify the bxdb-loaded data byte-for-byte. Flip to false for production.
  */
-static bool g_test_mode = true;
+static bool g_test_mode = false;
 
 static struct {
     struct BxdbHandle *fw_db;     /* open for writes + bulk reads (shadow-on) */
