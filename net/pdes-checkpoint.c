@@ -285,10 +285,37 @@ bool validate_checkpoint(const char **check_point_name){
     }
 
 }
+
+
+
+// TODO make this a field
 void create_checkpoint_bh(bool exit_after){
-    if(exit_after){
+    PDESWWT *wwt_engine = get_singleton_wwt_engine();
+    if (!wwt_engine->engine->needs_to_checkpoint){
+        return;
+    }
+
+    printf("WWT: Finished waiting for quanta for round %lu, starting checkpoint for this quantum.\n", wwt_engine->current_quantum_round - 1);
+    wwt_engine->engine->checkpoint_in_progress = false;
+    printf("WWT: Starting checkpoint for quantum %lu with snapshot name %s and format %d.\n", wwt_engine->current_quantum_round - 1, wwt_engine->engine->checkpoint_name, wwt_engine->engine->checkpoint_format);
+    save_snapshot(wwt_engine->engine->checkpoint_name, true, NULL, false, NULL, wwt_engine->engine->checkpoint_format, NULL);
+    printf("WWT: Finished checkpoint for quantum %lu, starting next quantum.\n", wwt_engine->current_quantum_round - 1);
+    wwt_engine->engine->needs_to_checkpoint = false;
+    wwt_engine->engine->notified_neighbors = false;
+    wwt_engine->engine->checkpoint_quantum_round = 0;
+    // delete and remove bh
+    qemu_bh_delete(wwt_engine->engine->boundry_checkpoint_bh);
+    wwt_engine->engine->boundry_checkpoint_bh = NULL;
+    wwt_engine->engine->skip_boundry_check_after_checkpoint = true;
+
+    // TODO make this check more modular (also maybe move verify function to here?)
+    // If checkpoint name is init_warmed, destroy engine and stop simulation
+    if (strcmp(wwt_engine->engine->checkpoint_name, "init_warmed") == 0 && wwt_engine->engine->master){
+        printf("Checkpoint name is init_warmed, destroying engine and stopping simulation.\n");
+        pdes_engine_destroy(wwt_engine->engine);
+    }
+    if (exit_after){
+        printf("Exiting after checkpointing because exit flag is set.\n");
         exit(0);
     }
-    return;
 }
-

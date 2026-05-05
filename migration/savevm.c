@@ -2925,7 +2925,8 @@ int qemu_loadvm_approve_switchover(void)
 }
 
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, Error **errp)
+                  bool has_devices, strList *devices, SnapshotFormat format,
+                  Error **errp)
 {
     
     assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
@@ -3018,7 +3019,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     // Based on the sync logic it should be ok if something is processed in between still 
     if (engine != NULL) {
         printf("Draining PDESEngine before snapshot\n");
-        int drain_res = pdes_drain(engine, name);
+        int drain_res = pdes_drain(engine, name, format);
         if (drain_res < 0){
             printf("Failed to drain PDESEngine before snapshot, error code %d\n", drain_res);
             return false;
@@ -3905,7 +3906,7 @@ static void snapshot_save_job_bh(void *opaque)
 
     job_progress_set_remaining(&s->common, 1);
     s->ret = save_snapshot(s->tag, false, s->vmstate,
-                           true, s->devices, s->errp);
+                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, s->errp);
     job_progress_update(&s->common, 1);
 
     qmp_snapshot_job_free(s);

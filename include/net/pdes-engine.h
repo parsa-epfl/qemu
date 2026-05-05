@@ -69,9 +69,12 @@ struct PDESEngine {
     bool needs_to_checkpoint;
     bool notified_neighbors;
     char checkpoint_name[10006];
+    SnapshotFormat checkpoint_format;
     // TODO this is specific to wwt, needs to be fixed
     uint64_t checkpoint_quantum_round;
     QEMUBH *boundry_checkpoint_bh;
+    // Special bool: if we checkpointed: since it can move time by qemu for all nodes: don't do boundry check : TODO clean this check up later
+    bool skip_boundry_check_after_checkpoint;
 
     // exit changes
     bool notified_neighbors_for_exit;
@@ -107,7 +110,7 @@ void pdes_play(void *opaque);
 // drain: Define the function to send everything to neighbours through singleton used for example when savingvm
 // TODO check how generalizable this is for more neighbours and the other strategies
 PDESEngine *get_singleton_engine();
-int pdes_drain(PDESEngine *engine, char * snapshot_name);
+int pdes_drain(PDESEngine *engine, char * snapshot_name, SnapshotFormat format);
 
 
 

@@ -9,7 +9,6 @@
 #include "migration/snapshot.h"
 #include "sysemu/cpu-timers.h"
 #include "hw/core/cpu.h"
-#include <assert.h>
 
 #ifdef CONFIG_LIBQFLEX
 #include "middleware/libqflex/libqflex-legacy-api.h"
@@ -33,11 +32,11 @@ int64_t get_current_virtual_for_destroy_message(PDESEngine *engine) {
 }
 
 PDESEngine *pdes_engine_create(
-    const char *shm_send, 
-    const char *shm_recv, 
-    bool sync, 
+    const char *shm_send,
+    const char *shm_recv,
+    bool sync,
     int64_t latencyns,
-    PDESRecvCallback cb, 
+    PDESRecvCallback cb,
     void *opaque,
     PauseStatusCallBack pause_status_cb,
     void *pause_status_opaque,
@@ -46,7 +45,6 @@ PDESEngine *pdes_engine_create(
 ) {
     // Show error if singleton was created before
     assert(singleton_engine == NULL && "Singleton engine already created");
-    icount_set_sleep(false);
     PDESEngine *engine = g_new0(PDESEngine, 1);
     engine->comm = pdes_comm_create(shm_send, shm_recv);
     engine->needs_sync = sync;
@@ -75,8 +73,10 @@ PDESEngine *pdes_engine_create(
     engine->notified_neighbors = false;
     engine->notified_neighbors_for_exit = false;
     engine->boundry_checkpoint_bh = NULL;
+    engine->skip_boundry_check_after_checkpoint = false;
     engine->ready_to_exit_neighbors = 0;
     engine->permitted_to_exit = false;
+    engine->ready_to_exit = false;
 
 
 
@@ -84,11 +84,12 @@ PDESEngine *pdes_engine_create(
     // Schedule it IMMEDIATELY
 
     // TODO look into optimizing this
-    
+    timer_mod(engine->msg_rec_poll_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST)+50000); // 5 microseconds
+
     int64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     // TODO remove this field
     engine->first_sync_time = current_time;
-    
+
     singleton_engine = engine;
     printf(">>>>>>> NET_INIT_PDES CALLED <<<<<<<\n");
     return engine;
@@ -104,7 +105,6 @@ void notify_neighbours_of_end(PDESEngine *engine){
     printf("==========================================Existing PDES Engine...==========================================\n");
     Message mssg = create_message(NULL, 0, END_OF_EMULATION, get_current_virtual_for_destroy_message(engine));
     pdes_comm_send(engine->comm, &mssg);
-    // g_free(engine);
     printf("==========================================PDES Engine exited.==========================================\n");
 }
 // TODO clean this up, destroying needs clean up
@@ -122,10 +122,16 @@ void pdes_engine_destroy(PDESEngine *engine) {
     // Notify neighbors that we are ending the simulation
     notify_neighbours_of_end(engine);
     if(engine->needs_to_checkpoint){
-        assert(false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.");
+        // Create bh
+        if (!engine->boundry_checkpoint_bh){
+            engine->boundry_checkpoint_bh = qemu_bh_new(create_checkpoint_bh, true);
+        }
+        qemu_bh_schedule(engine->boundry_checkpoint_bh);
     }else{
         destroy_strategy();
+#ifdef CONFIG_LIBQFLEX
         libqflex_stop("Simulation terminated by flexus.");
+#endif
         exit(0);
     }
 }
@@ -154,7 +160,7 @@ void initiate_checkpoint_master(void *context){
     }
     printf("Master initiating systemic snapshot save for checkpoint initiation...\n");
     save_snapshot("init_warmed",
-                true, NULL, false, NULL, NULL);
+                true, NULL, false, NULL, SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE, NULL);
     qemu_bh_delete(engine->checkpoint_bh);
     printf("Master completed systemic snapshot save for checkpoint initiation.\n");
 
@@ -167,13 +173,14 @@ void set_checkpoint_values_for_master(){
     // TODO Make this repeated part into a function
     engine->notified_neighbors = false;
     engine->needs_to_checkpoint = true;
+    engine->checkpoint_format = SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE;
     // TODO this is specific to wwt, need to generalize later, maybe include this in the message
     PDESWWT *wwt_engine = get_singleton_wwt_engine();
     engine->checkpoint_quantum_round = wwt_engine->current_quantum_round; // this is specific to wwt, need to generalize later
-    char* snapshot_name = "init_warmed"; 
+    char* snapshot_name = "init_warmed";
     snprintf(engine->checkpoint_name, sizeof(engine->checkpoint_name), "%s", snapshot_name);
-    printf("Setting checkpoint values for master, snapshot name: %s, quantum round: %lu\n", engine->checkpoint_name, engine->checkpoint_quantum_round);
-    // For now skipping 
+    printf("Setting checkpoint values for master, snapshot name: %s, format: %d, quantum round: %lu\n", engine->checkpoint_name, engine->checkpoint_format, engine->checkpoint_quantum_round);
+    // For now skipping
 }
 void process_message(PDESEngine *engine, Message *msg) {
 
@@ -201,8 +208,47 @@ void process_message(PDESEngine *engine, Message *msg) {
     }
     if (msg->type==DRAIN_START){
         printf("PDES Engine received drain end message, marking drained as true.\n");
-        assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
+        engine->checkpoint_in_progress = true;
 
+        if (!engine->master){
+            printf("PDES Engine initiating systemic snapshot save after drain.\n");
+            // This is not master so we need to savesnapshot immidiately
+            // TODO change this so the message includes snapshot name
+            // TODO : Ugly solution for now to avoid deadlock:  create a host time timer, call this later, call it immidiately after this
+            // TODO We will get stuck thanks to quanta, need to generalize later
+            Message *msg_copy = g_new(Message, 1);
+            *msg_copy = *msg;
+
+            engine->needs_to_checkpoint = true;
+
+            // TODO verify new snapshot name formatting and parsing, for both send and receive
+            // TODO just turn this into a struct message
+            size_t name_len = msg->len - sizeof(SnapshotFormat) - sizeof(uint64_t);
+            memcpy(engine->checkpoint_name, msg->data, name_len);
+            engine->checkpoint_name[name_len] = '\0'; // null-terminate if needed
+
+            SnapshotFormat format;
+            memcpy(&format, msg->data + name_len, sizeof(SnapshotFormat));
+
+            // read quantum round too, for later use if needed
+            uint64_t quantum_round = 0;
+            if (msg->len >= sizeof(SnapshotFormat) + sizeof(uint64_t)) {
+                memcpy(&quantum_round, msg->data + name_len + sizeof(SnapshotFormat),sizeof(uint64_t));
+            }
+
+            engine->checkpoint_format = format;
+            engine->checkpoint_quantum_round = quantum_round;
+
+            printf("Parsed checkpoint initiation message, snapshot name: %s, format: %d, quantum round: %lu\n", engine->checkpoint_name, format, quantum_round);
+
+
+
+
+
+        }else{
+            // This variable is only used for master, TODO maybe move this
+            engine->neighbour_drained += 1;
+        }
     }else if (msg->type==DRAIN_END){
         printf("PDES Engine received drain end message, marking checkpoint as completed.\n");
         if (!engine->master){
@@ -225,9 +271,10 @@ void process_message(PDESEngine *engine, Message *msg) {
         }
     }
 }
+
 void pdes_engine_poll(void *opaque) {
     PDESEngine *engine = opaque;
-    
+
     while(true){
         Message msg;
         int res = pdes_comm_recv(engine->comm, &msg);
@@ -262,36 +309,45 @@ void pdes_pause_bh(void *opaque){
     qemu_bh_delete(engine->pause_bh);
     engine->pause_bh = NULL;
 }
-
+#ifndef CONFIG_LIBQFLEX
+// TODO this relies on being on main thread always, add some safeguards for this
+CPUState *paused_cpu = NULL;
+#endif
 void pdes_pause(void *opaque){
     PDESEngine *engine = opaque;
-    
+
 
     // Create bh
     // Make sure bh is empty
     // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to pause, this should not happen");
     // engine->pause_bh = qemu_bh_new(pdes_pause_bh, engine);
     // qemu_bh_schedule(engine->pause_bh);
-    
+
     // qemu_system_vmstop_request_prepare();
     // qemu_system_vmstop_request(RUN_STATE_PAUSED);
 
 
     engine->paused = true;
+#ifdef CONFIG_LIBQFLEX
     if (flexus_api.pause != NULL){
         flexus_api.pause();
     }else if(flexus_api.stop != NULL){
         assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
     }
+#endif
 
     assert(engine->pause_bh == NULL);
     engine->pause_bh = qemu_bh_new(pdes_pause_bh, engine);
     qemu_bh_schedule(engine->pause_bh);
 
+#ifndef CONFIG_LIBQFLEX
+    if (current_cpu != NULL){
+        paused_cpu = current_cpu;
+        current_cpu->stop = true;
+        // cpu_exit(current_cpu);
+    }
+#endif
 
-    
-
-    
 
     return;
 }
@@ -305,26 +361,37 @@ void pdes_play(void *opaque){
     // assert(engine->pause_bh == NULL && "Pause BH is not NULL when trying to play, this should not happen");
     // engine->pause_bh = qemu_bh_new(play_bh, engine);
     // qemu_bh_schedule(engine->pause_bh);
+#ifndef CONFIG_LIBQFLEX
+    if (paused_cpu != NULL){
+        paused_cpu->stop = false;
+        paused_cpu = NULL;
+    }
+#endif
     vm_start();
-    
+#ifdef CONFIG_LIBQFLEX
     if (flexus_api.resume != NULL){
         flexus_api.resume();
     }else if(flexus_api.stop != NULL){
         assert(false && "Flexus resume API is not implemented, but stop API is implemented, this should not happen as both should be implemented together");
     }
+#endif
     engine->paused = false;
     return;
 }
 
 
-int pdes_drain(PDESEngine *engine, char * snapshot_name) {
+
+int pdes_drain(PDESEngine *engine, char * snapshot_name, SnapshotFormat format) {
+#ifdef CONFIG_LIBQFLEX
+    assert(format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE && "qemu fork: pdes_drain only supports SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE");
+#endif
     if (engine->master){
         engine->checkpoint_in_progress = true;
-   
-    
 
 
-        
+
+
+
         Message drain_end_msg = create_message(NULL, 0, DRAIN_END, get_universal_virtual_time(engine));
         pdes_comm_send(engine->comm, &drain_end_msg);
         engine->neighbour_drained = 0;
@@ -379,9 +446,9 @@ bool can_stop(PDESEngine *engine){
     if (!engine->master){
         // Send INTENT_TO_END_EMULATION message to master
         // TODO make all these bool flags atomic:
-        
+
         // TODO these message are specific to 2 nodes, need to generalize for more nodes and send only to master
-        if(!engine->notified_neighbors_for_exit){   
+        if(!engine->notified_neighbors_for_exit){
             Message intent_to_end_msg = create_message(NULL, 0, INTENT_TO_END_EMULATION, get_universal_virtual_time(engine));
             pdes_comm_send(engine->comm, &intent_to_end_msg);
             printf("Sent intent to end emulation message to master, waiting for permission to exit.\n");
