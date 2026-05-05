@@ -802,7 +802,8 @@ struct __attribute__((aligned(64))) qemu_plugin_timing_info {
     uint64_t load_memory_state_time_ns;
     uint64_t save_uarch_state_time_ns;
     uint64_t load_uarch_state_time_ns;
-    uint64_t _padding[2];
+    uint64_t uffd_pages_loaded;
+    uint64_t _padding[1];
 };
 
 /**

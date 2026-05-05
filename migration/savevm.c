@@ -3335,6 +3335,7 @@ static void *uffd_on_demand_thread(void *main_ram)
         uint64_t page_ns = (t_page_end.tv_sec - t_page_start.tv_sec) * 1000000000LL
                          + (t_page_end.tv_nsec - t_page_start.tv_nsec);
         g_timing_info.load_memory_state_time_ns += page_ns;
+        g_timing_info.uffd_pages_loaded += 1;
 
         record_statistics_to_plugin(0, 5, 1);
     }
