@@ -65,10 +65,10 @@ system_ss.add(when: vmnet, if_true: vmnet_files)
 subdir('can')
 
 system_ss.add(files(
-  'pdes-communicator.c',
-  'pdes-engine.c',
-  'pdes-netdev.c',
-  'pdes-wwt.c',
-  'pdes-utility.c',
-  'pdes-checkpoint.c',
+  '../../qemu-pdes/net/pdes-communicator.c',
+  '../../qemu-pdes/net/pdes-engine.c',
+  '../../qemu-pdes/net/pdes-netdev.c',
+  '../../qemu-pdes/net/pdes-wwt.c',
+  '../../qemu-pdes/net/pdes-utility.c',
+  '../../qemu-pdes/net/pdes-checkpoint.c',
 ))

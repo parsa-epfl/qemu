@@ -507,6 +507,7 @@ endif
 add_project_arguments('-iquote', '.',
                       '-iquote', meson.current_source_dir(),
                       '-iquote', meson.current_source_dir() / 'include',
+                      '-iquote', meson.current_source_dir() / '..' / 'qemu-pdes' / 'include',
                       language: all_languages)
 
 # If a host-specific include directory exists, list that first...
