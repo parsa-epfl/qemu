@@ -76,6 +76,7 @@
 
 #include "migration/external_snapshot_util.h"
 #include "migration/bxdb_checkpoint.h"
+#include "migration/raw_checkpoint.h"
 #include <fcntl.h>
 #include <sys/mman.h>
 
@@ -89,6 +90,8 @@ const unsigned int postcopy_ram_discard_version;
 
 // Defined in vl.c.
 extern bool incremental_memory_snapshot;
+
+bool g_using_raw_checkpoint = false;
 
 /* Subcommands for QEMU_VM_COMMAND */
 enum qemu_vm_cmd {
@@ -2973,6 +2976,14 @@ static struct RAMBlock *get_main_memory(void) {
     assert(false);
 }
 
+static bool is_incremental_format(SnapshotFormat format)
+{
+    return format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB;
+}
+
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
                   bool has_devices, strList *devices, SnapshotFormat format, Error **errp)
 {
@@ -3068,6 +3079,8 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
 
         case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE:
         case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB:
         case SNAPSHOT_FORMAT_EXTERNAL_ZSTD: {
             char snapshot_file_name[299];
             if (format == SNAPSHOT_FORMAT_EXTERNAL_ZSTD) {
@@ -3101,7 +3114,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     struct DirtyBitmapSnapshot *dirty_bitmap = NULL;
 
     // alright, if the format of the snapshot is incremental, we need to make the march-virt.ram not migratable.
-    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE || format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+    if (is_incremental_format(format)) {
         pause_snapshotting_main_memory(true);
         dirty_bitmap = memory_region_snapshot_and_clear_dirty(get_main_memory()->mr, 0, get_main_memory()->used_length, DIRTY_MEMORY_MIGRATION);
     }
@@ -3110,7 +3123,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     vm_state_size = qemu_file_transferred_noflush(f);
     ret2 = qemu_fclose(f);
 
-    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE || format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+    if (is_incremental_format(format)) {
         pause_snapshotting_main_memory(false);
     }
 
@@ -3136,6 +3149,24 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
             bret = bxdb_ckpt_save_delta(sn->name, dirty_bitmap,
                                         main_ram->host, main_ram->used_length,
                                         errp);
+        }
+        g_free(dirty_bitmap);
+        if (bret < 0) {
+            ret = bret;
+            goto the_end;
+        }
+    } else if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB ||
+               format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB) {
+        struct RAMBlock *main_ram = get_main_memory();
+        int bret;
+        if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB) {
+            bret = raw_ckpt_save_base(sn->name,
+                                      main_ram->host, main_ram->used_length,
+                                      errp);
+        } else {
+            bret = raw_ckpt_save_delta(sn->name, dirty_bitmap,
+                                       main_ram->host, main_ram->used_length,
+                                       errp);
         }
         g_free(dirty_bitmap);
         if (bret < 0) {
@@ -3315,12 +3346,19 @@ static void *uffd_on_demand_thread(void *main_ram)
         uint64_t offset = fault_address - (uint64_t)ram->host;
         assert(offset < ram->used_length);
 
-        if (!bxdb_ckpt_fetch_page(offset, buffer)) {
-            /* Page not stored (all-zero in the base memory region). */
-            memset(buffer, 0, page_size);
+        if (g_using_raw_checkpoint) {
+            if (!raw_ckpt_fetch_page(offset, buffer)) {
+                /* Page not stored (all-zero in the base memory region). */
+                memset(buffer, 0, page_size);
+            }
+            raw_ckpt_verify_page(offset, buffer);
+        } else {
+            if (!bxdb_ckpt_fetch_page(offset, buffer)) {
+                /* Page not stored (all-zero in the base memory region). */
+                memset(buffer, 0, page_size);
+            }
+            bxdb_ckpt_verify_page(offset, buffer);
         }
-
-        bxdb_ckpt_verify_page(offset, buffer);
 
         assert(uffd_copy_page(
             ram->on_demand_uffd_fd,
@@ -3382,7 +3420,11 @@ bool load_snapshot(const char *name, const char *vmstate,
     char zstd_snapshot_name[293];
     snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
 
-    bool is_incremental = bxdb_ckpt_snapshot_exists(sn.name);
+    bool is_bxdb_incremental = bxdb_ckpt_snapshot_exists(sn.name);
+    bool is_raw_incremental  = raw_ckpt_snapshot_exists(sn.name);
+    bool is_incremental = is_bxdb_incremental || is_raw_incremental;
+
+    g_using_raw_checkpoint = is_raw_incremental;
 
     if (ret < 0) {
         return false;
@@ -3443,7 +3485,11 @@ bool load_snapshot(const char *name, const char *vmstate,
     RAMBlock *main_ram = get_main_memory();
 
     if (IS_ON_DEMAND_LOADING) {
-        ret = bxdb_ckpt_ondemand_open(name, main_ram->used_length, errp);
+        if (is_raw_incremental) {
+            ret = raw_ckpt_ondemand_open(name, main_ram->used_length, errp);
+        } else {
+            ret = bxdb_ckpt_ondemand_open(name, main_ram->used_length, errp);
+        }
         if (ret < 0) {
             goto err_drain;
         }
@@ -3472,8 +3518,13 @@ bool load_snapshot(const char *name, const char *vmstate,
 
     if (is_incremental && !IS_ON_DEMAND_LOADING) {
         clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_start);
-        ret = bxdb_ckpt_load_bulk(name, main_ram->host,
-                                  main_ram->used_length, errp);
+        if (is_raw_incremental) {
+            ret = raw_ckpt_load_bulk(name, main_ram->host,
+                                     main_ram->used_length, errp);
+        } else {
+            ret = bxdb_ckpt_load_bulk(name, main_ram->host,
+                                      main_ram->used_length, errp);
+        }
         clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_end);
         if (ret < 0) {
             goto err_drain;
