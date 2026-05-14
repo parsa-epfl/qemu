@@ -3000,6 +3000,10 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
 
     struct timespec t_total_start, t_mem_start, t_mem_end;
     struct timespec t_uarch_start, t_uarch_end;
+    struct timespec t_dirty_snap_start, t_dirty_snap_end;
+    struct timespec t_savevm_fclose_start, t_savevm_fclose_end;
+    struct timespec t_pre_work_end;
+    struct timespec t_bdrv_snap_start, t_bdrv_snap_end;
     clock_gettime(CLOCK_MONOTONIC_RAW, &t_total_start);
 
     if (migration_is_blocked(errp)) {
@@ -3113,15 +3117,21 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
 
     struct DirtyBitmapSnapshot *dirty_bitmap = NULL;
 
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_pre_work_end);
+
     // alright, if the format of the snapshot is incremental, we need to make the march-virt.ram not migratable.
     if (is_incremental_format(format)) {
         pause_snapshotting_main_memory(true);
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_dirty_snap_start);
         dirty_bitmap = memory_region_snapshot_and_clear_dirty(get_main_memory()->mr, 0, get_main_memory()->used_length, DIRTY_MEMORY_MIGRATION);
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_dirty_snap_end);
     }
 
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_savevm_fclose_start);
     ret = qemu_savevm_state(f, errp);
     vm_state_size = qemu_file_transferred_noflush(f);
     ret2 = qemu_fclose(f);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_savevm_fclose_end);
 
     if (is_incremental_format(format)) {
         pause_snapshotting_main_memory(false);
@@ -3185,8 +3195,10 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     aio_context_release(aio_context);
     aio_context = NULL;
 
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_bdrv_snap_start);
     ret = bdrv_all_create_snapshot(sn, bs, vm_state_size,
-                                   has_devices, devices, errp);
+                                    has_devices, devices, errp);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_bdrv_snap_end);
     if (ret < 0) {
         bdrv_all_delete_snapshot(sn->name, has_devices, devices, NULL);
         goto the_end;
@@ -3217,9 +3229,38 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
                         + (t_mem_end.tv_nsec - t_mem_start.tv_nsec);
         uint64_t uarch_ns = (t_uarch_end.tv_sec - t_uarch_start.tv_sec) * 1000000000LL
                           + (t_uarch_end.tv_nsec - t_uarch_start.tv_nsec);
+        uint64_t dirty_snap_ns = 0;
+        uint64_t savevm_fclose_ns;
+        if (is_incremental_format(format)) {
+            dirty_snap_ns = (t_dirty_snap_end.tv_sec - t_dirty_snap_start.tv_sec) * 1000000000LL
+                          + (t_dirty_snap_end.tv_nsec - t_dirty_snap_start.tv_nsec);
+        }
+        savevm_fclose_ns = (t_savevm_fclose_end.tv_sec - t_savevm_fclose_start.tv_sec) * 1000000000LL
+                         + (t_savevm_fclose_end.tv_nsec - t_savevm_fclose_start.tv_nsec);
+        uint64_t pre_work_ns = (t_pre_work_end.tv_sec - t_total_start.tv_sec) * 1000000000LL
+                             + (t_pre_work_end.tv_nsec - t_total_start.tv_nsec);
+        uint64_t bdrv_snap_ns = (t_bdrv_snap_end.tv_sec - t_bdrv_snap_start.tv_sec) * 1000000000LL
+                              + (t_bdrv_snap_end.tv_nsec - t_bdrv_snap_start.tv_nsec);
+
         g_timing_info.total_save_time_ns += total_ns;
         g_timing_info.save_memory_state_time_ns += mem_ns;
         g_timing_info.save_uarch_state_time_ns += uarch_ns;
+        g_timing_info.save_dirty_snapshot_time_ns += dirty_snap_ns;
+        g_timing_info.save_qemu_savevm_state_time_ns += savevm_fclose_ns;
+        g_timing_info.save_pre_work_time_ns += pre_work_ns;
+        g_timing_info.save_bdrv_snapshot_time_ns += bdrv_snap_ns;
+
+        // fprintf(stderr,
+        //         "[snapshot] %s: total=%.3f ms  pre_work=%.3f ms  dirty_snap=%.3f ms  "
+        //         "savevm+fclose=%.3f ms  memory(bxdb)=%.3f ms  bdrv_snap=%.3f ms  uarch=%.3f ms\n",
+        //         sn->name,
+        //         total_ns / 1000000.0,
+        //         pre_work_ns / 1000000.0,
+        //         dirty_snap_ns / 1000000.0,
+        //         savevm_fclose_ns / 1000000.0,
+        //         mem_ns / 1000000.0,
+        //         bdrv_snap_ns / 1000000.0,
+        //         uarch_ns / 1000000.0);
     }
 
     if (aio_context) {

@@ -808,7 +808,10 @@ struct __attribute__((aligned(64))) qemu_plugin_timing_info {
     uint64_t save_uarch_state_time_ns;
     uint64_t load_uarch_state_time_ns;
     uint64_t uffd_pages_loaded;
-    uint64_t _padding[1];
+    uint64_t save_dirty_snapshot_time_ns;
+    uint64_t save_qemu_savevm_state_time_ns;
+    uint64_t save_pre_work_time_ns;
+    uint64_t save_bdrv_snapshot_time_ns;
 };
 
 /**
