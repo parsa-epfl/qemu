@@ -24,10 +24,10 @@ struct DirtyBitmapSnapshot;
  * Save paths. `memory` points at the first byte of the guest RAM region to
  * snapshot; `memory_size` is its size in bytes and must be a multiple of 4096.
  *
- * save_base writes bxdb snap_id 0 (no shadow, all-ones bitmap, 8 workers) and
- * closes the DB. save_delta requires that a prior load_bulk has opened the DB
- * with shadow enabled, and appends a new snapshot to it using `dirty->dirty`
- * as the per-page bitmap (same memory/size must be passed).
+ * save_base writes bxdb snap_id 0 (no shadow, 16 workers) and closes the DB.
+ * save_delta requires that a prior load_bulk has opened the DB with shadow
+ * enabled, and appends a new snapshot to it using `dirty->dirty` as the
+ * per-page bitmap (same memory/size must be passed).
  */
 int bxdb_ckpt_save_base(const char *name,
                         const void *memory, uint64_t memory_size,

@@ -17,7 +17,7 @@
 #include "bxdb.h"
 
 #define BXDB_PAGE_SIZE       4096u
-#define BXDB_WORKER_COUNT    8
+#define BXDB_WORKER_COUNT    16
 #define BXDB_DELTA_THRESHOLD 0  /* 0 == library default (DEFAULT_DELTA_THRESHOLD) */
 
 /*
@@ -214,14 +214,8 @@ int bxdb_ckpt_save_base(const char *name,
         return -1;
     }
 
-    /* All-ones bitmap: every page is dirty for the base snapshot. */
-    uint64_t nwords = (page_count + 63) / 64;
-    uint64_t *bitmap = g_malloc(nwords * sizeof(uint64_t));
-    memset(bitmap, 0xff, nwords * sizeof(uint64_t));
+    bxdb_save_all_pages(db, (const char *)memory, page_count, 0);
 
-    bxdb_save_pages(db, (const char *)memory, bitmap, page_count, 0);
-
-    g_free(bitmap);
     bxdb_close(db);
 
     if (write_meta(name, db_path, 0, errp) < 0) {
@@ -271,16 +265,11 @@ int bxdb_ckpt_save_delta(const char *name,
 
     uint64_t page_count = memory_size / BXDB_PAGE_SIZE;
 
-    /*
-     * DirtyBitmapSnapshot::dirty is `unsigned long dirty[]`. On 64-bit
-     * platforms (all Linux hosts QEMU targets here) that's compatible with
-     * uint64_t[]. bxdb expects the bitmap to have >= ceil(page_count/64) words.
-     */
-    bxdb_save_pages(g_ctx.fw_db,
-                    (const char *)memory,
-                    (const uint64_t *)dirty->dirty,
-                    page_count,
-                    g_ctx.next_snap_id);
+    bxdb_save_pages_with_bitmap(g_ctx.fw_db,
+                                (const char *)memory,
+                                (const uint64_t *)dirty->dirty,
+                                page_count,
+                                g_ctx.next_snap_id);
 
     if (write_meta(name, g_ctx.db_path, g_ctx.next_snap_id, errp) < 0) {
         return -1;
