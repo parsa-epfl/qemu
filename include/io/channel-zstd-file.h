@@ -46,6 +46,8 @@ struct QIOChannelZstdFile {
     int fd;
     bool writing;
 
+    int tee_fd;
+
     ZSTD_CCtx *cctx;
     uint8_t *comp_out_buf;
     size_t comp_out_size;

@@ -25,10 +25,13 @@
 #include "qemu/module.h"
 #include "trace.h"
 
+static const bool g_generate_raw_file = false;
+
 static void qio_channel_zstd_file_init(Object *obj)
 {
     QIOChannelZstdFile *ioc = QIO_CHANNEL_ZSTD_FILE(obj);
     ioc->fd = -1;
+    ioc->tee_fd = -1;
     ioc->writing = false;
     ioc->cctx = NULL;
     ioc->comp_out_buf = NULL;
@@ -68,6 +71,11 @@ static void qio_channel_zstd_file_finalize(Object *obj)
     ioc->decomp_buf = NULL;
     ioc->decomp_buf_size = 0;
 
+    if (ioc->tee_fd != -1) {
+        qemu_close(ioc->tee_fd);
+        ioc->tee_fd = -1;
+    }
+
     if (ioc->fd != -1) {
         qemu_close(ioc->fd);
         ioc->fd = -1;
@@ -85,6 +93,23 @@ static ssize_t qio_channel_zstd_file_writev(QIOChannel *ioc,
     QIOChannelZstdFile *zioc = QIO_CHANNEL_ZSTD_FILE(ioc);
 
     for (size_t i = 0; i < niov; i++) {
+        if (g_generate_raw_file && zioc->tee_fd != -1) {
+            size_t offset = 0;
+            do {
+                ssize_t written = write(zioc->tee_fd,
+                                        (uint8_t *)iov[i].iov_base + offset,
+                                        iov[i].iov_len - offset);
+                if (written < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    error_setg_errno(errp, errno, "Failed to write tee data");
+                    return -1;
+                }
+                offset += (size_t)written;
+            } while (offset < iov[i].iov_len);
+        }
+
         ZSTD_inBuffer z_in = {
             .src = iov[i].iov_base,
             .size = iov[i].iov_len,
@@ -269,6 +294,11 @@ static int qio_channel_zstd_file_close(QIOChannel *ioc,
         }
     }
 
+    if (zioc->tee_fd != -1) {
+        qemu_close(zioc->tee_fd);
+        zioc->tee_fd = -1;
+    }
+
     if (zioc->fd != -1) {
         if (qemu_close(zioc->fd) < 0) {
             error_setg_errno(errp, errno, "Unable to close file");
@@ -320,6 +350,21 @@ qio_channel_zstd_file_new_output(const char *path, Error **errp)
         return NULL;
     }
     ioc->writing = true;
+
+    if (g_generate_raw_file) {
+        char *raw_path = g_strdup(path);
+        char *dot = strstr(raw_path, ".zstd");
+        if (dot) {
+            memcpy(dot, ".raw", 4);
+        }
+        ioc->tee_fd = qemu_open_old(raw_path,
+                                     O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (ioc->tee_fd < 0) {
+            error_report("failed to open raw debug tee file %s: %s",
+                         raw_path, strerror(errno));
+        }
+        g_free(raw_path);
+    }
 
     ioc->cctx = ZSTD_createCCtx();
     if (!ioc->cctx) {

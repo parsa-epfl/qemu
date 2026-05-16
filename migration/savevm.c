@@ -3093,11 +3093,14 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
                 snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.state.zstd", sn->name);
             }
 
-            f = qemu_file_open_zstd_output(snapshot_file_name, errp);
-            if (!f) {
+            QIOChannelZstdFile *zstd_ioc = qio_channel_zstd_file_new_output(snapshot_file_name, errp);
+            if (!zstd_ioc) {
                 error_setg(errp, "Could not create snapshot file");
                 goto the_end;
             }
+
+            qio_channel_set_name(QIO_CHANNEL(zstd_ioc), "snapshot-zstd");
+            f = qemu_file_new_output(QIO_CHANNEL(zstd_ioc));
 
             break;
         }
