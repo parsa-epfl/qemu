@@ -812,6 +812,13 @@ struct __attribute__((aligned(64))) qemu_plugin_timing_info {
     uint64_t save_qemu_savevm_state_time_ns;
     uint64_t save_pre_work_time_ns;
     uint64_t save_bdrv_snapshot_time_ns;
+
+    /* Raw checkpoint per-page fetch breakdown */
+    uint64_t raw_ckpt_total_ns;     /* total time inside raw_ckpt_fetch_page */
+    uint64_t raw_ckpt_index_ns;     /* binary search across all ondemand files */
+    uint64_t raw_ckpt_copy_ns;      /* memcpy from mmap into buffer */
+    uint64_t raw_ckpt_pages_found;  /* pages found and copied */
+    uint64_t raw_ckpt_pages_zero;   /* pages not stored (logically zero) */
 };
 
 /**

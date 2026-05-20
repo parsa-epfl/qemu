@@ -14,6 +14,7 @@
 #include "exec/memory.h"
 #include "migration/raw_checkpoint.h"
 #include "migration/external_snapshot_util.h"
+#include "qemu/plugin-pf.h"
 
 #define RAW_CKPT_PAGE_SIZE  4096u
 
@@ -21,7 +22,7 @@
  * When true, every save also writes "<chain_dir>/raw_complete_<snap_id>.zstd"
  * and every load decompresses that blob to verify the loaded data byte-for-byte.
  */
-static bool g_test_mode = true;
+static bool g_test_mode = false;
 
 /*
  * Raw file format (little-endian, host order):
@@ -812,6 +813,11 @@ int raw_ckpt_ondemand_open(const char *name, uint64_t memory_size,
 
 bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
 {
+    struct timespec _t_total, _t_seg, _t_seg_end;
+    uint64_t t_index_acc = 0, t_copy_acc = 0;
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &_t_total);
+
     uint64_t target_addr = offset;
 
     /* Search from latest to oldest */
@@ -822,10 +828,10 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
         }
 
         const uint8_t *base = (const uint8_t *)f->mapping;
-        const uint64_t *addrs =
-            (const uint64_t *)(base + sizeof(uint64_t));
+        const uint64_t *addrs = (const uint64_t *)(base + sizeof(uint64_t));
 
         /* binary search the sorted address array */
+        clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg);
         uint64_t lo = 0, hi = f->num_records;
         while (lo < hi) {
             uint64_t mid = lo + (hi - lo) / 2;
@@ -835,14 +841,38 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
                 hi = mid;
             }
         }
+        clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg_end);
+        t_index_acc += (uint64_t)(_t_seg_end.tv_sec  - _t_seg.tv_sec)  * 1000000000ULL
+                     + (uint64_t)(_t_seg_end.tv_nsec - _t_seg.tv_nsec);
 
         if (lo < f->num_records && addrs[lo] == target_addr) {
+            clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg);
             memcpy(buffer,
                    base + f->data_offset + lo * RAW_CKPT_PAGE_SIZE,
                    RAW_CKPT_PAGE_SIZE);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg_end);
+            t_copy_acc = (uint64_t)(_t_seg_end.tv_sec  - _t_seg.tv_sec)  * 1000000000ULL
+                       + (uint64_t)(_t_seg_end.tv_nsec - _t_seg.tv_nsec);
+
+            clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg);
+            g_timing_info.raw_ckpt_total_ns +=
+                (uint64_t)(_t_seg.tv_sec  - _t_total.tv_sec)  * 1000000000ULL
+                + (uint64_t)(_t_seg.tv_nsec - _t_total.tv_nsec);
+            g_timing_info.raw_ckpt_index_ns += t_index_acc;
+            g_timing_info.raw_ckpt_copy_ns  += t_copy_acc;
+            g_timing_info.raw_ckpt_pages_found += 1;
+
             return true;
         }
     }
+
+    /* zero page: not found in any file */
+    clock_gettime(CLOCK_MONOTONIC_RAW, &_t_seg);
+    g_timing_info.raw_ckpt_total_ns +=
+        (uint64_t)(_t_seg.tv_sec  - _t_total.tv_sec)  * 1000000000ULL
+        + (uint64_t)(_t_seg.tv_nsec - _t_total.tv_nsec);
+    g_timing_info.raw_ckpt_index_ns += t_index_acc;
+    g_timing_info.raw_ckpt_pages_zero += 1;
 
     return false;
 }
