@@ -819,6 +819,8 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
     clock_gettime(CLOCK_MONOTONIC_RAW, &_t_total);
 
     uint64_t target_addr = offset;
+    uint64_t files_searched = 0;
+    uint64_t bsearch_steps = 0;
 
     /* Search from latest to oldest */
     for (int i = 0; i < g_raw_ondemand.num_files; i++) {
@@ -826,6 +828,8 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
         if (f->fd == -1 || f->num_records == 0) {
             continue;
         }
+
+        files_searched++;
 
         const uint8_t *base = (const uint8_t *)f->mapping;
         const uint64_t *addrs = (const uint64_t *)(base + sizeof(uint64_t));
@@ -835,6 +839,7 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
         uint64_t lo = 0, hi = f->num_records;
         while (lo < hi) {
             uint64_t mid = lo + (hi - lo) / 2;
+            bsearch_steps++;
             if (addrs[mid] < target_addr) {
                 lo = mid + 1;
             } else {
@@ -861,6 +866,8 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
             g_timing_info.raw_ckpt_index_ns += t_index_acc;
             g_timing_info.raw_ckpt_copy_ns  += t_copy_acc;
             g_timing_info.raw_ckpt_pages_found += 1;
+            g_timing_info.raw_ckpt_files_searched += files_searched;
+            g_timing_info.raw_ckpt_bsearch_steps += bsearch_steps;
 
             return true;
         }
@@ -873,6 +880,8 @@ bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
         + (uint64_t)(_t_seg.tv_nsec - _t_total.tv_nsec);
     g_timing_info.raw_ckpt_index_ns += t_index_acc;
     g_timing_info.raw_ckpt_pages_zero += 1;
+    g_timing_info.raw_ckpt_files_searched += files_searched;
+    g_timing_info.raw_ckpt_bsearch_steps += bsearch_steps;
 
     return false;
 }

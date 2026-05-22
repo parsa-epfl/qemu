@@ -819,6 +819,8 @@ struct __attribute__((aligned(64))) qemu_plugin_timing_info {
     uint64_t raw_ckpt_copy_ns;      /* memcpy from mmap into buffer */
     uint64_t raw_ckpt_pages_found;  /* pages found and copied */
     uint64_t raw_ckpt_pages_zero;   /* pages not stored (logically zero) */
+    uint64_t raw_ckpt_files_searched;  /* cumulative # of ondemand files iterated */
+    uint64_t raw_ckpt_bsearch_steps;   /* cumulative # of binary-search loop iterations */
 };
 
 /**
