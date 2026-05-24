@@ -3575,6 +3575,77 @@ bool load_snapshot(const char *name, const char *vmstate,
         }
     }
 
+    if (!is_incremental) {
+        char mem_file_name[300];
+        snprintf(mem_file_name, sizeof(mem_file_name), "%s.mem", sn.name);
+        if (g_file_test(mem_file_name, G_FILE_TEST_IS_REGULAR)) {
+            int mem_fd;
+            off_t file_size;
+
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_start);
+
+            mem_fd = open(mem_file_name, O_RDONLY);
+            if (mem_fd < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not open .mem file '%s'",
+                                 mem_file_name);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            file_size = lseek(mem_fd, 0, SEEK_END);
+            if (file_size < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not seek .mem file '%s'",
+                                 mem_file_name);
+                close(mem_fd);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            assert((uint64_t)file_size == main_ram->used_length);
+
+            if (lseek(mem_fd, 0, SEEK_SET) < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not seek .mem file '%s'",
+                                 mem_file_name);
+                close(mem_fd);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            {
+                size_t remaining = (size_t)file_size;
+                uint8_t *dst = main_ram->host;
+                while (remaining > 0) {
+                    ssize_t n = read(mem_fd, dst, remaining);
+                    if (n < 0) {
+                        error_setg_errno(errp, errno,
+                                         "Failed to read .mem file '%s'",
+                                         mem_file_name);
+                        close(mem_fd);
+                        ret = -EIO;
+                        goto err_drain;
+                    }
+                    if (n == 0) {
+                        error_setg(errp,
+                                   "Unexpected EOF reading .mem file '%s'",
+                                   mem_file_name);
+                        close(mem_fd);
+                        ret = -EIO;
+                        goto err_drain;
+                    }
+                    dst += n;
+                    remaining -= (size_t)n;
+                }
+            }
+
+            close(mem_fd);
+
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_end);
+        }
+    }
+
     if (is_incremental) {
         /* Keep main memory out of live migration while it is backed by bxdb. */
         pause_snapshotting_main_memory(true);
