@@ -811,6 +811,77 @@ int raw_ckpt_ondemand_open(const char *name, uint64_t memory_size,
     return 0;
 }
 
+int raw_ckpt_ondemand_open_at(const char *chain_dir, uint64_t memory_size,
+                              Error **errp)
+{
+    (void)memory_size;
+
+    uint32_t current_snap_id;
+
+    /* close any previously opened files */
+    raw_ckpt_ondemand_close();
+
+    /* Read chain meta to get current_snap_id */
+    if (read_chain_meta(chain_dir, &current_snap_id, errp) < 0) {
+        return -1;
+    }
+
+    int num_files = (int)current_snap_id + 1; /* base + all deltas */
+    g_raw_ondemand.num_files = num_files;
+    g_raw_ondemand.files = g_malloc0((size_t)num_files * sizeof(RawOndemandFile));
+
+    /* Open from latest to oldest (index 0 = latest) */
+    for (uint32_t sid = current_snap_id; ; sid--) {
+        int idx = (int)(current_snap_id - sid);
+        char path[PATH_MAX];
+        data_file_path(chain_dir, sid, path, sizeof(path));
+
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            g_raw_ondemand.files[idx].fd = -1;
+            if (sid == 0) {
+                break;
+            }
+            continue;
+        }
+
+        struct stat st;
+        if (fstat(fd, &st) < 0) {
+            close(fd);
+            error_setg_errno(errp, errno, "fstat failed for %s", path);
+            raw_ckpt_ondemand_close();
+            return -1;
+        }
+
+        void *mapping = mmap(NULL, (size_t)st.st_size, PROT_READ,
+                             MAP_PRIVATE, fd, 0);
+        if (mapping == MAP_FAILED) {
+            close(fd);
+            error_setg_errno(errp, errno, "mmap failed for %s", path);
+            raw_ckpt_ondemand_close();
+            return -1;
+        }
+
+        uint64_t n = *(const uint64_t *)mapping;
+
+        g_raw_ondemand.files[idx].fd = fd;
+        g_raw_ondemand.files[idx].mapping = mapping;
+        g_raw_ondemand.files[idx].file_size = (size_t)st.st_size;
+        g_raw_ondemand.files[idx].num_records = n;
+        g_raw_ondemand.files[idx].data_offset =
+            QEMU_ALIGN_UP(8 + n * 8, 4096);
+
+        if (sid == 0) {
+            break;
+        }
+    }
+
+    pstrcpy(g_raw_ctx.chain_dir, sizeof(g_raw_ctx.chain_dir), chain_dir);
+    g_raw_ctx.current_snap_id = current_snap_id;
+
+    return 0;
+}
+
 bool raw_ckpt_fetch_page(uint64_t offset, void *buffer)
 {
     struct timespec _t_total, _t_seg, _t_seg_end;

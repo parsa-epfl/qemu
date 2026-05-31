@@ -57,5 +57,6 @@
   qemu_plugin_savevm;
   qemu_plugin_get_exposed_statistics;
   qemu_plugin_register_record_statistics_cb;
+  qemu_plugin_on_exit;
   qemu_plugin_get_timing_info;
 };

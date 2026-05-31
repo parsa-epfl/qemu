@@ -614,6 +614,19 @@ void qemu_plugin_register_flush_cb(qemu_plugin_id_t id,
 void qemu_plugin_register_atexit_cb(qemu_plugin_id_t id,
                                     qemu_plugin_udata_cb_t cb, void *userdata);
 
+/**
+ * qemu_plugin_on_exit() - plugin requests QEMU to prepare for exit
+ * @id: plugin ID
+ *
+ * A plugin that is about to call exit() should call this function first,
+ * giving QEMU a chance to flush and close any persistent resources
+ * (such as the bxdb database) before the process terminates.
+ *
+ * This must be called before the plugin calls exit() or equivalent;
+ * once called the plugin should not make further use of QEMU services.
+ */
+void qemu_plugin_on_exit(qemu_plugin_id_t id);
+
 /* returns -1 in user-mode */
 int qemu_plugin_n_vcpus(void);
 
@@ -821,6 +834,12 @@ struct __attribute__((aligned(64))) qemu_plugin_timing_info {
     uint64_t raw_ckpt_pages_zero;   /* pages not stored (logically zero) */
     uint64_t raw_ckpt_files_searched;  /* cumulative # of ondemand files iterated */
     uint64_t raw_ckpt_bsearch_steps;   /* cumulative # of binary-search loop iterations */
+
+    /* BXDB-vs-RAW dual-test harness counters */
+    uint64_t dual_bxdb_fetch_total_ns; /* total ns in bxdb_ckpt_fetch_page */
+    uint64_t dual_raw_fetch_total_ns;  /* total ns in raw_ckpt_fetch_page */
+    uint64_t dual_pages_fetched;       /* # of pages tested in dual mode */
+    uint64_t dual_mismatches;          /* # of pages where bxdb != raw */
 };
 
 /**
