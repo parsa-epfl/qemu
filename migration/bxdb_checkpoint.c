@@ -457,3 +457,13 @@ void bxdb_ckpt_shutdown(void)
         g_ctx.ref_size = 0;
     }
 }
+
+const char *bxdb_ckpt_db_path(void)
+{
+    return g_ctx.db_path[0] != '\0' ? g_ctx.db_path : NULL;
+}
+
+uint32_t bxdb_ckpt_snap_id(void)
+{
+    return g_ctx.ondemand_snap_id;
+}

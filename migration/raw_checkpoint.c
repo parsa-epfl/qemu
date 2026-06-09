@@ -812,19 +812,16 @@ int raw_ckpt_ondemand_open(const char *name, uint64_t memory_size,
 }
 
 int raw_ckpt_ondemand_open_at(const char *chain_dir, uint64_t memory_size,
-                              Error **errp)
+                              uint32_t snap_id, Error **errp)
 {
     (void)memory_size;
 
-    uint32_t current_snap_id;
+    uint32_t current_snap_id = snap_id;
 
     /* close any previously opened files */
     raw_ckpt_ondemand_close();
 
-    /* Read chain meta to get current_snap_id */
-    if (read_chain_meta(chain_dir, &current_snap_id, errp) < 0) {
-        return -1;
-    }
+    /* Reset the ondemand snap_id to the passed value (not the chain meta) */
 
     int num_files = (int)current_snap_id + 1; /* base + all deltas */
     g_raw_ondemand.num_files = num_files;

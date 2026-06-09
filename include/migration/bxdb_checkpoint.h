@@ -74,6 +74,9 @@ void bxdb_ckpt_ondemand_close(void);
 
 void bxdb_ckpt_shutdown(void);
 
+const char *bxdb_ckpt_db_path(void);
+uint32_t bxdb_ckpt_snap_id(void);
+
 #else  /* !CONFIG_BXDB */
 
 static inline int bxdb_ckpt_save_base(const char *name,
@@ -116,6 +119,8 @@ static inline bool bxdb_ckpt_fetch_page(uint64_t offset, void *buffer) { return 
 static inline void bxdb_ckpt_verify_page(uint64_t offset, const void *buffer) { }
 static inline void bxdb_ckpt_ondemand_close(void) { }
 static inline void bxdb_ckpt_shutdown(void) { }
+static inline const char *bxdb_ckpt_db_path(void) { return NULL; }
+static inline uint32_t  bxdb_ckpt_snap_id(void)  { return 0; }
 
 #endif /* CONFIG_BXDB */
 

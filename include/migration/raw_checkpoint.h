@@ -60,7 +60,7 @@ int  raw_ckpt_ondemand_open(const char *name, uint64_t memory_size,
  * QEMU snapshot name.  Used by the BXDB-vs-RAW dual-test harness.
  */
 int  raw_ckpt_ondemand_open_at(const char *chain_dir, uint64_t memory_size,
-                               Error **errp);
+                               uint32_t snap_id, Error **errp);
 
 bool raw_ckpt_fetch_page(uint64_t offset, void *buffer);
 void raw_ckpt_verify_page(uint64_t offset, const void *buffer);
