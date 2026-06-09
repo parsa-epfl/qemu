@@ -293,7 +293,8 @@
     'shm-recv': 'str',
     'latencyns': 'uint64',
     'sync': 'bool',
-    'master': 'bool'
+    'master': 'bool',
+    '*phantom': 'bool'
     } }
 ##
 # @NetdevL2TPv3Options:
