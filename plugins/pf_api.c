@@ -41,6 +41,12 @@ qemu_plugin_flushing_local_tlb_t pf_flushing_local_tlb_cb = NULL;
 qemu_plugin_save_statistics_callback_t pf_save_statistics_cb = NULL;
 qemu_plugin_record_statistics_cb_t pf_record_statistics_cb = NULL;
 
+/* Callback for delivering an interrupt */
+qemu_plugin_on_deliver_interrupt_cb_t pf_on_deliver_interrupt_cb = NULL;
+qemu_plugin_on_deliver_interrupt_with_time_cb_t pf_on_deliver_interrupt_with_time_cb = NULL;
+
+bool g_statistics_managed_by_plugin = false;
+
 /* Global statistics array exposed to plugins - aligned to prevent false sharing */
 struct qemu_plugin_exposed_statistics g_exposed_statistics[QEMU_PLUGIN_MAX_CORES] __attribute__((aligned(64)));
 
@@ -187,6 +193,77 @@ bool qemu_plugin_register_record_statistics_cb(
   return true;
 }
 
+uint64_t qemu_plugin_read_cpu_integer_register(int reg_index)
+{
+    return 0;
+}
+
+const uint64_t *
+qemu_plugin_hwaddr_translate_walk_trace(
+    const struct qemu_plugin_hwaddr *hwaddr)
+{
+    return NULL;
+}
+
+void qemu_plugin_write_physical_memory(uint64_t physical_address,
+                                         uint64_t size, const void *buf)
+{
+}
+
+uint64_t qemu_plugin_get_quantum_size(void)
+{
+    return 0;
+}
+
+bool qemu_plugin_is_icount_mode(void)
+{
+    return true;
+}
+
+static uint32_t g_fake_quantum_generation;
+static uint64_t g_fake_target_time;
+static uint32_t g_fake_waiting_for_quantum;
+
+bool qemu_plugin_register_on_deliver_interrupt_cb(
+    qemu_plugin_on_deliver_interrupt_cb_t cb)
+{
+    if (pf_on_deliver_interrupt_cb) {
+        return false;
+    }
+    pf_on_deliver_interrupt_cb = cb;
+    return true;
+}
+
+bool qemu_plugin_register_on_deliver_interrupt_with_time_cb(
+    qemu_plugin_on_deliver_interrupt_with_time_cb_t cb)
+{
+    if (pf_on_deliver_interrupt_with_time_cb) {
+        return false;
+    }
+    pf_on_deliver_interrupt_with_time_cb = cb;
+    return true;
+}
+
+uint32_t *qemu_plugin_get_global_quantum_generation_ptr(void)
+{
+    return &g_fake_quantum_generation;
+}
+
+uint64_t *qemu_plugin_get_vcpu_target_time_ptr(uint32_t cpu_idx)
+{
+    return &g_fake_target_time;
+}
+
+uint32_t *qemu_plugin_get_vcpu_waiting_for_quantum_ptr(uint32_t cpu_idx)
+{
+    return &g_fake_waiting_for_quantum;
+}
+
+bool qemu_plugin_register_plugin_quantum_generation_increment_variable(
+    uint64_t *var)
+{
+    return false;
+}
 
 
 #endif /* CONFIG_USER_ONLY */

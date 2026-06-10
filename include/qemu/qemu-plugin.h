@@ -53,6 +53,8 @@ extern QEMU_PLUGIN_EXPORT int qemu_plugin_version;
 
 #define QEMU_PLUGIN_VERSION 1
 
+#define QEMU_PLUGIN_CYAN_VERSION 9527
+
 /**
  * struct qemu_info_t - system information for plugins
  *
@@ -702,15 +704,14 @@ enum qemu_plugin_tlb_flush_type_t {
 };
 
 /* Snapshot format for savevm */
-enum qemu_plugin_snapshot_format_t {
-    QEMU_PLUGIN_SNAPSHOT_FORMAT_RAW = 0,
-    QEMU_PLUGIN_SNAPSHOT_FORMAT_XDELTA = 1,
+typedef enum qemu_plugin_snapshot_format_t {
+    QEMU_PLUGIN_SNAPSHOT_FORMAT_INTERNAL_RAW = 0,
     QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_ZSTD = 2,
     QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE = 4,
     QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA = 5,
     QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB = 6,
     QEMU_PLUGIN_SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB = 7,
-};
+} qemu_plugin_snapshot_format_t;
 
 /* Callback typedefs */
 typedef void (*qemu_plugin_vcpu_branch_resolved_cb_t)(
@@ -720,7 +721,7 @@ typedef void (*qemu_plugin_snapshot_cb_t)(const char *name);
 
 typedef void (*qemu_plugin_event_loop_poll_cb_t)(void);
 
-typedef bool (*qemu_plugin_periodic_check_cb_t)(void);
+typedef bool (*qemu_plugin_periodic_check_cb_t)(uint64_t passed_cycles);
 
 typedef void (*qemu_plugin_flushing_local_tlb_t)(
     uint32_t vcpu_idx,
@@ -863,5 +864,76 @@ struct qemu_plugin_timing_info *qemu_plugin_get_timing_info(void);
  */
 PF_API bool qemu_plugin_register_record_statistics_cb(qemu_plugin_record_statistics_cb_t cb);
 
+/**
+ * qemu_plugin_read_cpu_integer_register - returns the value of the given
+ * integer register.
+ *
+ * This function can be only called from threads that run a vCPU. Otherwise, it
+ * will trigger assertion failure.
+ */
+PF_API AARCH64_ONLY_API uint64_t
+qemu_plugin_read_cpu_integer_register(int reg_index);
+
+/**
+ * qemu_plugin_hwaddr_translate_walk_trace - returns the trace of walking the
+ * page table to get the specific translation.
+ *
+ * The returned array has 4 elements. Every element is the hardware address of a
+ * specific page table entry. For huge pages or translation error, you will see
+ * -1 in the array ahead of time.
+ *
+ * This function can be only called from threads that run a vCPU. Otherwise, it
+ * will return NULL.
+ */
+PF_API AARCH64_ONLY_API const uint64_t *
+qemu_plugin_hwaddr_translate_walk_trace(
+    const struct qemu_plugin_hwaddr *hwaddr);
+
+/**
+ * qemu_plugin_write_physical_memory - write the value to the given physical
+ * memory address.
+ *
+ * This function calls the cpu_physical_memory_rw to write the physical memory.
+ *
+ * This function will not trigger memory access plugin.
+ */
+PF_API void qemu_plugin_write_physical_memory(uint64_t physical_address,
+                                                uint64_t size, const void *buf);
+
+/**
+ * qemu_plugin_get_quantum_size - return the quantum size.
+ *
+ * Return 0 if the quantum is not enabled.
+ */
+PF_API uint64_t qemu_plugin_get_quantum_size(void);
+
+/**
+ * qemu_plugin_is_icount_mode - return whether the icount mode is enabled.
+ *
+ * Returns true if the icount mode is enabled.
+ */
+PF_API bool qemu_plugin_is_icount_mode(void);
+
+typedef void (*qemu_plugin_on_deliver_interrupt_cb_t)(
+  uint32_t vcpu_idx
+);
+
+PF_API bool qemu_plugin_register_on_deliver_interrupt_cb(
+    qemu_plugin_on_deliver_interrupt_cb_t cb);
+
+typedef void (*qemu_plugin_on_deliver_interrupt_with_time_cb_t)(
+    uint32_t vcpu_idx, uint64_t src_time, bool is_from_core);
+
+PF_API bool qemu_plugin_register_on_deliver_interrupt_with_time_cb(
+    qemu_plugin_on_deliver_interrupt_with_time_cb_t cb);
+
+PF_API uint32_t *qemu_plugin_get_global_quantum_generation_ptr(void);
+
+PF_API uint64_t *qemu_plugin_get_vcpu_target_time_ptr(uint32_t cpu_idx);
+
+PF_API uint32_t *qemu_plugin_get_vcpu_waiting_for_quantum_ptr(uint32_t cpu_idx);
+
+PF_API bool qemu_plugin_register_plugin_quantum_generation_increment_variable(
+    uint64_t *var);
 
 #endif /* QEMU_QEMU_PLUGIN_H */
