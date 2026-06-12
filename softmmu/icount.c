@@ -337,7 +337,7 @@ void icount_start_warp_timer(void)
         bool pdes_paused = false;
         PDESEngine* engine = get_singleton_engine();
         if (engine != NULL) {
-            pdes_paused = engine->paused;
+            pdes_paused = qatomic_read(&engine->paused);
         }
         if (!all_cpu_threads_idle()) {
             return;
