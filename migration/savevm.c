@@ -3385,15 +3385,27 @@ bool load_snapshot(const char *name, const char *vmstate,
         return false;
     }
 
-    // if (engine != NULL){
-    //     // TODO make this usable by any strategy
-    //     PDESWWT *wwt_engine = get_singleton_wwt_engine();
-    //     int ret = pdes_inflight_restore_and_schedule(name, wwt_engine->recv_cb, wwt_engine->recv_opaque);
-    //     if (ret < 0) {
-    //         error_setg(errp, "Failed to restore in-flight operations for the snapshot");
-    //         return false;
-    //     }
-    // }
+    if (engine != NULL){
+        // TODO make this usable by any strategy
+        PDESWWT *wwt_engine = get_singleton_wwt_engine();
+        int ret = pdes_inflight_restore_and_schedule(name, wwt_engine->recv_cb, wwt_engine->recv_opaque);
+        if (ret < 0) {
+            error_setg(errp, "Failed to restore in-flight operations for the snapshot");
+            return false;
+        }
+    } else {
+        // No engine to restore into. Fine when the snapshot saved nothing — but if an in-flight
+        // file EXISTS, skipping would silently drop those messages: fail the load instead.
+        char *inflight_file = get_json_file_name(name);
+        bool have_inflight = g_file_test(inflight_file, G_FILE_TEST_IS_REGULAR);
+        g_free(inflight_file);
+        if (have_inflight) {
+            error_setg(errp, "[CKPT-INFLIGHT] %s: in-flight file exists but PDES engine is not "
+                       "initialized at load — messages would be dropped", name);
+            return false;
+        }
+        printf("[CKPT-INFLIGHT] %s: engine not ready at load, no in-flight file - nothing to restore\n", name);
+    }
 
     /*
      * Flush the record/replay queue. Now the VM state is going
