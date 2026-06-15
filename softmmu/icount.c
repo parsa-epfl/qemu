@@ -332,8 +332,13 @@ void icount_start_warp_timer(void)
 
     if (replay_mode != REPLAY_MODE_PLAY) {
         // TODO : this is running on main loop so no race condition but later on we should add locks for flags on flexus_api
-        // If all cpus are paused, but flexus is not, icount will be progressed by it so there is no ned for warping due to hlt
-        bool flexus_driving = flexus_api.is_paused != NULL && !flexus_api.is_paused();
+        // Timing build = Flexus drives virtual time. When running it STEPS through idle one cycle at a
+        // time (materializing it — see cycle.cpp cpuHalted/++theWFI); when paused (WWT) it is
+        // time-neutral and the peer releases it. The icount bias-warp must NEVER jump past idle here,
+        // else the idle is skipped and the sampling window loses it (multi-node node-0 would show no
+        // idle while single-node, stepping via its phantom, does). Gate on "Flexus attached" — not on
+        // "!is_paused()" which left the paused / quanta_sync transient able to warp. Step, don't skip.
+        bool flexus_attached = (flexus_api.is_paused != NULL);
         bool pdes_paused = false;
         PDESEngine* engine = get_singleton_engine();
         if (engine != NULL) {
@@ -343,8 +348,9 @@ void icount_start_warp_timer(void)
             return;
         }
 
-        // if any core is awake, or flexus is driving or that we are in pause, no need to warp
-        if (flexus_driving || pdes_paused){
+        // Flexus-driven timing node steps through idle; never warp. (pdes_paused kept for any
+        // non-Flexus PDES build where the engine exists but no Flexus is attached.)
+        if (flexus_attached || pdes_paused){
             qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
             return;
         }
@@ -400,6 +406,18 @@ void icount_start_warp_timer(void)
              * to the next QEMU_CLOCK_VIRTUAL event and notify it.
              * It is useful when we want a deterministic execution time,
              * isolated from host latencies.
+             */
+            /*
+             * TODO(idle-accounting, speed): this bias jump skips an idle gap of `deadline` ns in one
+             * step (e.g. to the next deferred PDES message = next request). On a Flexus-driven timing
+             * node that means `theCycleCount` never accrues those idle cycles, so the sampling window
+             * shows no idle — multi-node node-0 gets no idle windows while single-node (phantom keeps
+             * Flexus driving, so it steps through and materializes idle) does. We currently FIX this by
+             * stepping through the gap (suppressing this warp on the timing node) — accurate but pays
+             * the per-cycle cost. SPEED ALTERNATIVE (deferred; revisit): keep the warp but credit the
+             * skipped time to Flexus here — add a FLEXUS_API hook to bump theCycleCount by
+             * deadline*freq cycles counted as WFI/idle, so the window reflects the idle without
+             * stepping. Not done now: retroactively crediting after a skip risks divergence/new bugs.
              */
             seqlock_write_lock(&timers_state.vm_clock_seqlock,
                                &timers_state.vm_clock_lock);
