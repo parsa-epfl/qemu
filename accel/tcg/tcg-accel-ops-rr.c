@@ -36,6 +36,8 @@
 #include "tcg-accel-ops.h"
 #include "tcg-accel-ops-rr.h"
 #include "tcg-accel-ops-icount.h"
+#include "qemu/seqlock.h"
+#include "softmmu/timers-state.h"
 
 #ifdef CONFIG_LIBQFLEX
 #include "middleware/libqflex/libqflex-module.h"
@@ -110,7 +112,7 @@ static void rr_stop_kick_timer(void)
     }
 }
 
-static void rr_wait_io_event(void)
+void rr_wait_io_event(void)
 {
     CPUState *cpu;
 

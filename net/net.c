@@ -56,6 +56,7 @@
 #include "net/filter.h"
 #include "qapi/string-output-visitor.h"
 #include "qapi/qobject-input-visitor.h"
+#include "net/pdes-netdev.h"
 
 /* Net bridge is currently not supported for W32. */
 #if !defined(_WIN32)
@@ -1087,6 +1088,7 @@ static int (* const net_client_init_fun[NET_CLIENT_DRIVER__MAX])(
 #ifdef CONFIG_SLIRP
         [NET_CLIENT_DRIVER_USER]      = net_init_slirp,
 #endif
+        [NET_CLIENT_DRIVER_PDES] = net_init_pdes,
         [NET_CLIENT_DRIVER_TAP]       = net_init_tap,
         [NET_CLIENT_DRIVER_SOCKET]    = net_init_socket,
         [NET_CLIENT_DRIVER_STREAM]    = net_init_stream,
@@ -1186,6 +1188,7 @@ void show_netdevs(void)
         "dgram",
         "hubport",
         "tap",
+        "pdes",
 #ifdef CONFIG_SLIRP
         "user",
 #endif

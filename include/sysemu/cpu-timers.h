@@ -12,6 +12,11 @@
 
 #include "qemu/timer.h"
 
+/* used by flexus to drain and get number of executed instructions at libqflex_tick */
+int64_t icount_drain_executed(void);
+
+
+
 /* init the whole cpu timers API, including icount, ticks, and cpu_throttle */
 void cpu_timers_init(void);
 
@@ -87,5 +92,7 @@ void qemu_timer_notify_cb(void *opaque, QEMUClockType type);
 /* get the VIRTUAL clock and VM elapsed ticks via the cpus accel interface */
 int64_t cpus_get_virtual_clock(void);
 int64_t cpus_get_elapsed_ticks(void);
+
+void icount_set_sleep(bool sleep);
 
 #endif /* SYSEMU_CPU_TIMERS_H */
