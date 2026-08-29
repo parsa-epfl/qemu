@@ -37,6 +37,7 @@
 #include "migration/register.h"
 #include "migration/global_state.h"
 #include "migration/channel-block.h"
+#include "qemu/typedefs.h"
 #include "ram.h"
 #include "qemu-file.h"
 #include "savevm.h"
@@ -59,6 +60,7 @@
 #include "block/snapshot.h"
 #include "qemu/cutils.h"
 #include "io/channel-buffer.h"
+#include "io/channel-command.h"
 #include "io/channel-file.h"
 #include "sysemu/replay.h"
 #include "sysemu/runstate.h"
@@ -71,11 +73,26 @@
 #include "yank_functions.h"
 #include "sysemu/qtest.h"
 #include "options.h"
-#include "io/channel-command.h"
 
-#include "external_snapshot_util.h"
+#include "migration/external_snapshot_util.h"
+#include "migration/bxdb_checkpoint.h"
+#include "migration/raw_checkpoint.h"
+#include <fcntl.h>
+#include <sys/mman.h>
+
+#include "qemu/qemu-plugin.h"
+#include "qemu/plugin-pf.h"
+
+void
+libqflex_save_ckpt(char const * const dirname); // defined in libqflex.c
 
 const unsigned int postcopy_ram_discard_version;
+
+// Defined in vl.c.
+extern bool incremental_memory_snapshot;
+
+bool g_using_raw_checkpoint = false;
+static bool g_dual_test_mode = false;   /* set via BXDB_DUAL_TEST=1 env var */
 
 /* Subcommands for QEMU_VM_COMMAND */
 enum qemu_vm_cmd {
@@ -2922,8 +2939,54 @@ int qemu_loadvm_approve_switchover(void)
     return migrate_send_rp_switchover_ack(mis);
 }
 
+
+
+static char *get_xdelta3(Error **errp)
+{
+    char *xdelta3 = g_find_program_in_path("xdelta3");
+    if (!xdelta3)
+        error_setg(errp, "xdelta3 not found in PATH");
+
+    return xdelta3;
+}
+
+static void pause_snapshotting_main_memory(bool stop) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        if (strcmp(ram->idstr, "mach-virt.ram")) {
+            continue;
+        }
+        if (stop) {
+            qemu_ram_unset_migratable(ram);
+        } else {
+            qemu_ram_set_migratable(ram);
+        }
+    }
+}
+
+static struct RAMBlock *get_main_memory(void) {
+    struct RAMBlock *ram;
+    INTERNAL_RAMBLOCK_FOREACH(ram) {
+        int compare = strcmp(ram->idstr, "mach-virt.ram");
+        // printf("RAMBlock %s\n", ram->idstr);
+        if (compare) {
+            continue;
+        }
+        return ram;
+    }
+    assert(false);
+}
+
+static bool is_incremental_format(SnapshotFormat format)
+{
+    return format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB ||
+           format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB;
+}
+
 bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
-                  bool has_devices, strList *devices, Error **errp)
+                  bool has_devices, strList *devices, SnapshotFormat format, Error **errp)
 {
     BlockDriverState *bs;
     QEMUSnapshotInfo sn1, *sn = &sn1;
@@ -2935,6 +2998,14 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     AioContext *aio_context;
 
     GLOBAL_STATE_CODE();
+
+    struct timespec t_total_start, t_mem_start, t_mem_end;
+    struct timespec t_uarch_start, t_uarch_end;
+    struct timespec t_dirty_snap_start, t_dirty_snap_end;
+    struct timespec t_savevm_fclose_start, t_savevm_fclose_end;
+    struct timespec t_pre_work_end;
+    struct timespec t_bdrv_snap_start, t_bdrv_snap_end;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_total_start);
 
     if (migration_is_blocked(errp)) {
         return false;
@@ -2977,7 +3048,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     }
     aio_context = bdrv_get_aio_context(bs);
 
-    saved_vm_running = runstate_is_running();
+    saved_vm_running = runstate_is_running() || runstate_check(RUN_STATE_SAVE_VM);;
 
     global_state_store();
     vm_stop(RUN_STATE_SAVE_VM);
@@ -3005,15 +3076,71 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         pstrcpy(sn->name, sizeof(sn->name), autoname);
     }
 
+    switch (format) {
+        case SNAPSHOT_FORMAT_INTERNAL_RAW: {
+            f = qemu_fopen_bdrv(bs, 1);
+            break;
+        }
+
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB:
+        case SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB:
+        case SNAPSHOT_FORMAT_EXTERNAL_ZSTD: {
+            char snapshot_file_name[299];
+            if (format == SNAPSHOT_FORMAT_EXTERNAL_ZSTD) {
+                snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.zstd", sn->name);
+            } else {
+                snprintf(snapshot_file_name, sizeof(snapshot_file_name), "%s.state.zstd", sn->name);
+            }
+
+            QIOChannelZstdFile *zstd_ioc = qio_channel_zstd_file_new_output(snapshot_file_name, errp);
+            if (!zstd_ioc) {
+                error_setg(errp, "Could not create snapshot file");
+                goto the_end;
+            }
+
+            qio_channel_set_name(QIO_CHANNEL(zstd_ioc), "snapshot-zstd");
+            f = qemu_file_new_output(QIO_CHANNEL(zstd_ioc));
+
+            break;
+        }
+
+        default: {
+            error_setg(errp, "Unknown snapshot format");
+            goto the_end;
+        }
+
+    }
+
     /* save the VM state */
-    f = qemu_fopen_bdrv(bs, 1);
     if (!f) {
         error_setg(errp, "Could not open VM state file");
         goto the_end;
     }
+
+    struct DirtyBitmapSnapshot *dirty_bitmap = NULL;
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_pre_work_end);
+
+    // alright, if the format of the snapshot is incremental, we need to make the march-virt.ram not migratable.
+    if (is_incremental_format(format)) {
+        pause_snapshotting_main_memory(true);
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_dirty_snap_start);
+        dirty_bitmap = memory_region_snapshot_and_clear_dirty(get_main_memory()->mr, 0, get_main_memory()->used_length, DIRTY_MEMORY_MIGRATION);
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_dirty_snap_end);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_savevm_fclose_start);
     ret = qemu_savevm_state(f, errp);
     vm_state_size = qemu_file_transferred_noflush(f);
     ret2 = qemu_fclose(f);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_savevm_fclose_end);
+
+    if (is_incremental_format(format)) {
+        pause_snapshotting_main_memory(false);
+    }
+
     if (ret < 0) {
         goto the_end;
     }
@@ -3021,6 +3148,48 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
         ret = ret2;
         goto the_end;
     }
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_start);
+
+    if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE ||
+        format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA) {
+        struct RAMBlock *main_ram = get_main_memory();
+        int bret;
+        if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE) {
+            bret = bxdb_ckpt_save_base(sn->name,
+                                       main_ram->host, main_ram->used_length,
+                                       errp);
+        } else {
+            bret = bxdb_ckpt_save_delta(sn->name, dirty_bitmap,
+                                        main_ram->host, main_ram->used_length,
+                                        errp);
+        }
+        g_free(dirty_bitmap);
+        if (bret < 0) {
+            ret = bret;
+            goto the_end;
+        }
+    } else if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB ||
+               format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_DELTA_NO_BXDB) {
+        struct RAMBlock *main_ram = get_main_memory();
+        int bret;
+        if (format == SNAPSHOT_FORMAT_EXTERNAL_INCREMENTAL_BASE_NO_BXDB) {
+            bret = raw_ckpt_save_base(sn->name,
+                                      main_ram->host, main_ram->used_length,
+                                      errp);
+        } else {
+            bret = raw_ckpt_save_delta(sn->name, dirty_bitmap,
+                                       main_ram->host, main_ram->used_length,
+                                       errp);
+        }
+        g_free(dirty_bitmap);
+        if (bret < 0) {
+            ret = bret;
+            goto the_end;
+        }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_end);
 
     /* The bdrv_all_create_snapshot() call that follows acquires the AioContext
      * for itself.  BDRV_POLL_WHILE() does not support nested locking because
@@ -3030,16 +3199,74 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     aio_context_release(aio_context);
     aio_context = NULL;
 
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_bdrv_snap_start);
     ret = bdrv_all_create_snapshot(sn, bs, vm_state_size,
-                                   has_devices, devices, errp);
+                                    has_devices, devices, errp);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_bdrv_snap_end);
     if (ret < 0) {
         bdrv_all_delete_snapshot(sn->name, has_devices, devices, NULL);
         goto the_end;
     }
 
+    // create QFlex snapshot.
+    char qflex_snapshot_name[300];
+    snprintf(qflex_snapshot_name, sizeof(qflex_snapshot_name), "%s-flexus", sn->name);
+    libqflex_save_ckpt(qflex_snapshot_name);
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_uarch_start);
+
+    if (pf_savevm_cb) {
+        pf_savevm_cb(sn->name);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_uarch_end);
+
     ret = 0;
 
  the_end:
+    if (ret == 0) {
+        struct timespec t_now;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_now);
+        uint64_t total_ns = (t_now.tv_sec - t_total_start.tv_sec) * 1000000000LL
+                          + (t_now.tv_nsec - t_total_start.tv_nsec);
+        uint64_t mem_ns = (t_mem_end.tv_sec - t_mem_start.tv_sec) * 1000000000LL
+                        + (t_mem_end.tv_nsec - t_mem_start.tv_nsec);
+        uint64_t uarch_ns = (t_uarch_end.tv_sec - t_uarch_start.tv_sec) * 1000000000LL
+                          + (t_uarch_end.tv_nsec - t_uarch_start.tv_nsec);
+        uint64_t dirty_snap_ns = 0;
+        uint64_t savevm_fclose_ns;
+        if (is_incremental_format(format)) {
+            dirty_snap_ns = (t_dirty_snap_end.tv_sec - t_dirty_snap_start.tv_sec) * 1000000000LL
+                          + (t_dirty_snap_end.tv_nsec - t_dirty_snap_start.tv_nsec);
+        }
+        savevm_fclose_ns = (t_savevm_fclose_end.tv_sec - t_savevm_fclose_start.tv_sec) * 1000000000LL
+                         + (t_savevm_fclose_end.tv_nsec - t_savevm_fclose_start.tv_nsec);
+        uint64_t pre_work_ns = (t_pre_work_end.tv_sec - t_total_start.tv_sec) * 1000000000LL
+                             + (t_pre_work_end.tv_nsec - t_total_start.tv_nsec);
+        uint64_t bdrv_snap_ns = (t_bdrv_snap_end.tv_sec - t_bdrv_snap_start.tv_sec) * 1000000000LL
+                              + (t_bdrv_snap_end.tv_nsec - t_bdrv_snap_start.tv_nsec);
+
+        g_timing_info.total_save_time_ns += total_ns;
+        g_timing_info.save_memory_state_time_ns += mem_ns;
+        g_timing_info.save_uarch_state_time_ns += uarch_ns;
+        g_timing_info.save_dirty_snapshot_time_ns += dirty_snap_ns;
+        g_timing_info.save_qemu_savevm_state_time_ns += savevm_fclose_ns;
+        g_timing_info.save_pre_work_time_ns += pre_work_ns;
+        g_timing_info.save_bdrv_snapshot_time_ns += bdrv_snap_ns;
+
+        // fprintf(stderr,
+        //         "[snapshot] %s: total=%.3f ms  pre_work=%.3f ms  dirty_snap=%.3f ms  "
+        //         "savevm+fclose=%.3f ms  memory(bxdb)=%.3f ms  bdrv_snap=%.3f ms  uarch=%.3f ms\n",
+        //         sn->name,
+        //         total_ns / 1000000.0,
+        //         pre_work_ns / 1000000.0,
+        //         dirty_snap_ns / 1000000.0,
+        //         savevm_fclose_ns / 1000000.0,
+        //         mem_ns / 1000000.0,
+        //         bdrv_snap_ns / 1000000.0,
+        //         uarch_ns / 1000000.0);
+    }
+
     if (aio_context) {
         aio_context_release(aio_context);
     }
@@ -3051,6 +3278,7 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     }
     return ret == 0;
 }
+
 
 void qmp_xen_save_devices_state(const char *filename, bool has_live, bool live,
                                 Error **errp)
@@ -3134,151 +3362,124 @@ void qmp_xen_load_devices_state(const char *filename, Error **errp)
     migration_incoming_state_destroy();
 }
 
-static char *get_xdelta3(Error **errp)
+static void *uffd_on_demand_thread(void *main_ram)
 {
-    char *xdelta3 = g_find_program_in_path("xdelta3");
-    if (!xdelta3)
-        error_setg(errp, "xdelta3 not found in PATH");
-
-    return xdelta3;
-}
-
-static struct {
-    GHashTable *page_location;
-    uint64_t index;
-    char base_name[256];
-} incremental_snapshot_context = {
-    .page_location = NULL,
-    .index = 0,
-    .base_name = {0},
-};
-
-static struct RAMBlock *get_main_memory(void) {
-    struct RAMBlock *ram;
-    INTERNAL_RAMBLOCK_FOREACH(ram) {
-        int compare = strcmp(ram->idstr, "mach-virt.ram");
-        // printf("RAMBlock %s\n", ram->idstr);
-        if (compare) {
-            continue;
-        }
-        return ram;
-    }
-    assert(false);
-}
-
-static void pause_snapshotting_main_memory(bool stop) {
-    struct RAMBlock *ram;
-    INTERNAL_RAMBLOCK_FOREACH(ram) {
-        if (strcmp(ram->idstr, "mach-virt.ram")) {
-            continue;
-        }
-        if (stop) {
-            qemu_ram_unset_migratable(ram);
-        } else {
-            qemu_ram_set_migratable(ram);
-        }
-    }
-}
-
-static void *uffd_on_demand_thread(void *main_ram) {
     RAMBlock *ram = (RAMBlock *)main_ram;
     assert(ram != NULL);
 
-    uint8_t *buffer = g_malloc0(qemu_target_page_size());
+    uint64_t page_size = qemu_target_page_size();
+    uint8_t *buffer = g_malloc0(page_size);
 
     struct uffd_msg msg;
 
-    // handle page fault on demand.
     while (true) {
         int size = uffd_read_events(ram->on_demand_uffd_fd, &msg, 1) > 0;
         assert(size >= 0);
-
         if (size == 0) continue;
 
-        // handle the page fault. It has to be a page fault.
         if (msg.event != UFFD_EVENT_PAGEFAULT) {
             assert(false && "Unexpected event");
             continue;
         }
 
-        // get the fault address.
-        uint64_t fault_address = msg.arg.pagefault.address;
-        assert(fault_address % qemu_target_page_size() == 0); // should be page aligned.
+        struct timespec t_page_start, t_page_end;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_page_start);
 
-        // Figure out the offset.
+        uint64_t fault_address = msg.arg.pagefault.address;
+        assert(fault_address % page_size == 0);
+
         uint64_t offset = fault_address - (uint64_t)ram->host;
         assert(offset < ram->used_length);
 
-        // Load the page. First check the index. 
-        struct page_location_pair_t *info = ram->on_demand_index ? g_hash_table_lookup(
-            ram->on_demand_index,
-            GINT_TO_POINTER(offset)
-        ) : NULL;
+        if (g_dual_test_mode) {
+            struct timespec t_bxdb_start, t_bxdb_end;
+            struct timespec t_raw_start, t_raw_end;
+            uint8_t *bxdb_buf = g_malloc(page_size);
+            uint8_t *raw_buf  = g_malloc(page_size);
 
-        FILE *checkpoint_file = NULL;
-
-        if (info) {
-            // this means it is in a certain file.
-            // find the file.
-            char incremental_file_name[350];
-            snprintf(
-                incremental_file_name, 
-                sizeof(incremental_file_name), 
-                "%s.mem/%lu", 
-                ram->on_demand_file_name,
-                info->which_file
-            );
-
-            // open the file and seek to the offset.
-            checkpoint_file = fopen(incremental_file_name, "rb");
-            assert(checkpoint_file != NULL);
-
-            fseek(checkpoint_file, info->file_offset, SEEK_SET);
-
-            // read a page.
-            uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
-            assert(size == 1 && "Failed to read a page from the incremental file");
-        } else {
-            // this means it is in the base file.
-            // We need to load the base file.
-            char base_file_name[350];
-            snprintf(base_file_name, sizeof(base_file_name), "%s.mem/base", ram->on_demand_file_name);
-
-            // open the base file and seek to the offset.
-            checkpoint_file = fopen(base_file_name, "rb");
-            assert(checkpoint_file != NULL);
-
-            fseek(checkpoint_file, offset, SEEK_SET);
-            // read a page.
-            uint size = fread(buffer, qemu_target_page_size(), 1, checkpoint_file);
-            assert(size == 1 && "Failed to read a page from the base file");
-        }
-
-        // before copy the page, we need to compare the page with the reference.
-        if (ram->on_demand_ref_host) {
-            // compare the page with the reference.
-            uint8_t *ref_offset = (uint8_t *)(offset + (uint64_t)ram->on_demand_ref_host);
-            // do a 4K page compare.
-            for (uint i = 0; i < qemu_target_page_size(); ++i) {
-                if (buffer[i] != ref_offset[i]) {
-                    printf("Mismatch with reference page at offset %lu\n", offset + i);
-                    assert(false && "The page is not the same as the reference page");
-                }
+            /* Fetch from bxdb */
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_bxdb_start);
+            bool bxdb_found = bxdb_ckpt_fetch_page(offset, bxdb_buf);
+            if (!bxdb_found) {
+                memset(bxdb_buf, 0, page_size);
             }
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_bxdb_end);
+
+            /* Fetch from raw */
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_raw_start);
+            bool raw_found = raw_ckpt_fetch_page(offset, raw_buf);
+            if (!raw_found) {
+                memset(raw_buf, 0, page_size);
+            }
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_raw_end);
+
+            /* Compare */
+            if (memcmp(bxdb_buf, raw_buf, page_size) != 0) {
+                uint64_t diff_off = 0;
+                while (diff_off < page_size &&
+                       bxdb_buf[diff_off] == raw_buf[diff_off])
+                    diff_off++;
+                fprintf(stderr,
+                        "BXDB-vs-RAW MISMATCH: gpa=0x%" PRIx64 " page=%" PRIu64
+                        " off=%" PRIu64
+                        " bxdb=0x%02x raw=0x%02x"
+                        " Found: bxdb=%d raw=%d"
+                        " bxdb[0:8]=%02x%02x%02x%02x%02x%02x%02x%02x"
+                        " raw[0:8]=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                        offset, offset / page_size,
+                        diff_off,
+                        diff_off < page_size ? bxdb_buf[diff_off] : 0,
+                        diff_off < page_size ? raw_buf[diff_off] : 0,
+                        bxdb_found, raw_found,
+                        bxdb_buf[0], bxdb_buf[1], bxdb_buf[2], bxdb_buf[3],
+                        bxdb_buf[4], bxdb_buf[5], bxdb_buf[6], bxdb_buf[7],
+                        raw_buf[0], raw_buf[1], raw_buf[2], raw_buf[3],
+                        raw_buf[4], raw_buf[5], raw_buf[6], raw_buf[7]);
+                assert(!"BXDB-vs-RAW MISMATCH");
+            }
+
+            uint64_t bxdb_ns = (t_bxdb_end.tv_sec - t_bxdb_start.tv_sec)
+                * 1000000000LL + (t_bxdb_end.tv_nsec - t_bxdb_start.tv_nsec);
+            uint64_t raw_ns  = (t_raw_end.tv_sec - t_raw_start.tv_sec)
+                * 1000000000LL + (t_raw_end.tv_nsec - t_raw_start.tv_nsec);
+            g_timing_info.dual_bxdb_fetch_total_ns += bxdb_ns;
+            g_timing_info.dual_raw_fetch_total_ns  += raw_ns;
+            g_timing_info.dual_pages_fetched       += 1;
+
+            /* Use bxdb result for uffd_copy_page */
+            memcpy(buffer, bxdb_buf, page_size);
+            g_free(bxdb_buf);
+            g_free(raw_buf);
+        } else if (g_using_raw_checkpoint) {
+            if (!raw_ckpt_fetch_page(offset, buffer)) {
+                /* Page not stored (all-zero in the base memory region). */
+                memset(buffer, 0, page_size);
+            }
+            raw_ckpt_verify_page(offset, buffer);
+        } else {
+            if (!bxdb_ckpt_fetch_page(offset, buffer)) {
+                /* Page not stored (all-zero in the base memory region). */
+                memset(buffer, 0, page_size);
+            }
+            bxdb_ckpt_verify_page(offset, buffer);
         }
 
-        // copy the page to the fault address.
         assert(uffd_copy_page(
-            ram->on_demand_uffd_fd, 
-            (void *)fault_address,  
+            ram->on_demand_uffd_fd,
+            (void *)fault_address,
             buffer,
-            qemu_target_page_size(),
+            page_size,
             false
         ) == 0);
 
-        // done
-        fclose(checkpoint_file);
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_page_end);
 
+        uint64_t page_ns = (t_page_end.tv_sec - t_page_start.tv_sec) * 1000000000LL
+                         + (t_page_end.tv_nsec - t_page_start.tv_nsec);
+        g_timing_info.load_memory_state_time_ns += page_ns;
+        g_timing_info.uffd_pages_loaded += 1;
+
+        record_statistics_to_plugin(0, 5, 1);
     }
 }
 
@@ -3291,6 +3492,10 @@ bool load_snapshot(const char *name, const char *vmstate,
     int ret;
     AioContext *aio_context;
     MigrationIncomingState *mis = migration_incoming_get_current();
+
+    struct timespec t_total_start, t_mem_start = {0}, t_mem_end = {0};
+    struct timespec t_uarch_start, t_uarch_end;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_total_start);
 
     if (!bdrv_all_can_snapshot(has_devices, devices, errp)) {
         return false;
@@ -3317,24 +3522,19 @@ bool load_snapshot(const char *name, const char *vmstate,
     aio_context_release(aio_context);
 
     char zstd_snapshot_name[293];
-    char xdelta_snapshot_name[295];
-    char raw_snapshot_name[293];
-    char incremental_base_name[350];
-    char incremental_loc_name[350];
     snprintf(zstd_snapshot_name, sizeof(zstd_snapshot_name), "%s.zstd", sn.name);
-    snprintf(xdelta_snapshot_name, sizeof(xdelta_snapshot_name), "%s.xdelta", sn.name);
-    snprintf(raw_snapshot_name, sizeof(raw_snapshot_name), "%s", sn.name);
-    snprintf(incremental_base_name, sizeof(incremental_base_name), "%s.mem/base", sn.name);
-    snprintf(incremental_loc_name, sizeof(incremental_loc_name), "%s.loc", sn.name);
+
+    bool is_bxdb_incremental = bxdb_ckpt_snapshot_exists(sn.name);
+    bool is_raw_incremental  = raw_ckpt_snapshot_exists(sn.name);
+    bool is_incremental = is_bxdb_incremental || is_raw_incremental;
+
+    g_using_raw_checkpoint = is_raw_incremental;
 
     if (ret < 0) {
         return false;
-    } else if (sn.vm_state_size == 0 && 
-                !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) && 
-                !g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
-                !g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
-                !g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) &&
-                !g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
+    } else if (sn.vm_state_size == 0 &&
+               !g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR) &&
+               !is_incremental) {
         error_setg(errp, "This is a disk-only snapshot. Revert to it "
                    " offline using qemu-img");
         return false;
@@ -3354,63 +3554,20 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
-    bool is_incremental_base = false;
-    bool is_incremental_delta = false;
-
     /* restore the VM state */
-    if (g_file_test(xdelta_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        char *xdelta3 = get_xdelta3(errp);
-        if (!xdelta3)
-            return false;
-
-        const char *args[] = {xdelta3, "-d", "-q", "-c", xdelta_snapshot_name, NULL};
-
-        QIOChannelCommand *ioc = qio_channel_command_new_spawn(args, O_RDONLY, errp);
-        g_free(xdelta3);
-        if (!ioc) {
-            error_setg(errp, "Could not create pipe for xdelta3");
-            return false;
-        }
-
-        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
-
-        f = qemu_file_new_input(QIO_CHANNEL(ioc));
-        if (!f) {
-            error_setg(errp, "Could not open VM state file");
-            return false;
-        }
-
-    } else if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
+    if (g_file_test(zstd_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
         f = qemu_file_open_zstd_input(zstd_snapshot_name, errp);
         if (!f) {
             error_setg(errp, "Could not open VM state file");
             return false;
         }
-
-    } else if (g_file_test(raw_snapshot_name, G_FILE_TEST_IS_REGULAR)) {
-        QIOChannelFile *ioc = qio_channel_file_new_path(raw_snapshot_name, O_RDONLY | O_BINARY, 0, errp);
-        if (!ioc) {
-            error_setg(errp, "Could not open snapshot file");
-            return false;
-        }
-
-        qio_channel_set_name(QIO_CHANNEL(ioc), "load_snapshot");
-
-        f = qemu_file_new_input(QIO_CHANNEL(ioc));
-    } else if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR) || g_file_test(incremental_loc_name, G_FILE_TEST_IS_REGULAR)) {
-        // We are going to load the state from <name>.state.zstd.
+    } else if (is_incremental) {
         char state_file_name[350];
         snprintf(state_file_name, sizeof(state_file_name), "%s.state.zstd", sn.name);
         f = qemu_file_open_zstd_input(state_file_name, errp);
         if (!f) {
             error_setg(errp, "Could not open VM state file");
             return false;
-        }
-
-        if (g_file_test(incremental_base_name, G_FILE_TEST_IS_REGULAR)) {
-            is_incremental_base = true;
-        } else {
-            is_incremental_delta = true;
         }
     } else {
         f = qemu_fopen_bdrv(bs_vm_state, 0);
@@ -3428,94 +3585,71 @@ bool load_snapshot(const char *name, const char *vmstate,
         goto err_drain;
     }
 
-    bool IS_ON_DEMAND_LOADING = (is_incremental_base || is_incremental_delta) && on_demand;
-    bool ON_DEMAND_CHECKING = IS_ON_DEMAND_LOADING && on_demand == 2;
+    bool IS_ON_DEMAND_LOADING = is_incremental && on_demand;
     RAMBlock *main_ram = get_main_memory();
-    uint8_t *memory_addr_to_load = main_ram->host;
+
+    /* BXDB-vs-RAW dual-test mode: open both checkpoints for A/B comparison */
+    g_dual_test_mode = (getenv("BXDB_DUAL_TEST") != NULL);
+    if (g_dual_test_mode && IS_ON_DEMAND_LOADING) {
+        /* Open bxdb first to resolve the db_path */
+        ret = bxdb_ckpt_ondemand_open(sn.name, main_ram->used_length, errp);
+        if (ret < 0) {
+            goto err_drain;
+        }
+
+        /*
+         * Derive raw test dir from the resolved bxdb db_path.
+         *   e.g. /data/init_warmed.bxdb  →  /data/init_warmed.rawmem-test
+         * init_warmed.rawmem-test can be generated with convert-to-raw binary crate from bxdb core.
+         */
+        const char *db_path = bxdb_ckpt_db_path();
+        char raw_test_dir[PATH_MAX];
+        strncpy(raw_test_dir, db_path, sizeof(raw_test_dir) - 1);
+        raw_test_dir[sizeof(raw_test_dir) - 1] = '\0';
+        size_t dlen = strlen(raw_test_dir);
+        if (dlen > 5 && strcmp(raw_test_dir + dlen - 5, ".bxdb") == 0) {
+            strcpy(raw_test_dir + dlen - 5, ".rawmem-test");
+        } else {
+            snprintf(raw_test_dir + dlen, sizeof(raw_test_dir) - dlen,
+                     ".rawmem-test");
+        }
+
+        /* Open raw (generated by convert-to-raw utility) */
+        ret = raw_ckpt_ondemand_open_at(raw_test_dir, main_ram->used_length,
+                                         bxdb_ckpt_snap_id(), errp);
+        if (ret < 0) {
+            error_prepend(errp, "BXDB_DUAL_TEST: raw checkpoint missing at %s. "
+                          "Run convert-to-raw first.\n", raw_test_dir);
+            goto err_drain;
+        }
+        printf("BXDB_DUAL_TEST: comparing bxdb (%s) vs raw at %s\n",
+               db_path, raw_test_dir);
+    } else if (IS_ON_DEMAND_LOADING) {
+        if (is_raw_incremental) {
+            ret = raw_ckpt_ondemand_open(name, main_ram->used_length, errp);
+        } else {
+            ret = bxdb_ckpt_ondemand_open(name, main_ram->used_length, errp);
+        }
+        if (ret < 0) {
+            goto err_drain;
+        }
+    }
 
     if (IS_ON_DEMAND_LOADING) {
-        // set up the on-demand loading.
-        main_ram->on_demand_file_name = g_new0(char, 256);
-        main_ram->on_demand_index = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
-
-        if (is_incremental_delta) {
-            char loc_file[300];
-            snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
-            FILE *loc_file_fd = fopen(loc_file, "rb");
-            
-            if (!loc_file_fd) {
-                error_setg(errp, "Could not open the location file");
-                ret = -2;
-                goto err_drain;
-            }
-
-            // allocate the page location table.
-            if (main_ram->on_demand_index != NULL) {
-                g_hash_table_destroy(main_ram->on_demand_index);
-            }
-            main_ram->on_demand_index = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
-
-            uint64_t _current_index = 0;
-
-            deserialize_incremental_loc_file(
-                loc_file_fd, 
-                main_ram->on_demand_file_name, 
-                256, 
-                &_current_index,
-                main_ram->on_demand_index
-            );
-
-            fclose(loc_file_fd);
-        } else {
-            strcpy(main_ram->on_demand_file_name, name);
-        }
-
-        {
-            // make sure the memory size is matched.
-            char base_mem_file[300];
-            snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", main_ram->on_demand_file_name);
-            FILE *base_mem_file_fd = fopen(base_mem_file, "rb");
-            if (!base_mem_file_fd) {
-                error_setg(errp, "Could not open the base memory file");
-                ret = -2;
-                goto err_drain;
-            }
-
-            struct stat base_state;
-
-            stat(base_mem_file, &base_state);
-
-            if (base_state.st_size != main_ram->used_length) {
-                error_setg(errp, "The base memory file size does not match the RAM size");
-                ret = -2;
-                fclose(base_mem_file_fd);
-                goto err_drain;
-            }
-
-            fclose(base_mem_file_fd);
-        }
-
-        // force the OS to trigger page fault for this range of memory.
-        madvise(main_ram->host, main_ram->used_length, MADV_DONTNEED);
-    
         main_ram->on_demand_uffd_fd = uffd_create_fd(0, false);
-        assert(main_ram->on_demand_uffd_fd >= 0); // uffd_create_fd() should not fail.
+        assert(main_ram->on_demand_uffd_fd >= 0);
+
+        /* Force OS to trigger a page fault for this range. */
+        madvise(main_ram->host, main_ram->used_length, MADV_DONTNEED);
 
         assert(uffd_register_memory(
-            main_ram->on_demand_uffd_fd, 
-            main_ram->host, 
-            main_ram->used_length, 
+            main_ram->on_demand_uffd_fd,
+            main_ram->host,
+            main_ram->used_length,
             UFFDIO_REGISTER_MODE_MISSING,
             &main_ram->on_demand_uffd_ioctls
         ) == 0);
 
-        // add reference
-        if (ON_DEMAND_CHECKING) {
-            main_ram->on_demand_ref_host = qemu_anon_ram_alloc(main_ram->used_length, &main_ram->mr->align, false, true);
-            memory_addr_to_load = main_ram->on_demand_ref_host;
-        }
-        
-        // Start another thread to handle the uffd events.
         assert(pthread_create(
             &main_ram->on_demand_uffd_thread,
             NULL,
@@ -3524,197 +3658,94 @@ bool load_snapshot(const char *name, const char *vmstate,
         ) == 0);
     }
 
-    if (!(IS_ON_DEMAND_LOADING && !ON_DEMAND_CHECKING)) {
-           if (is_incremental_base) {
-            QEMUFile *f = qemu_file_open_input(incremental_base_name, errp);
-            if (!f) {
-                error_setg(errp, "Could not open VM state file");
-                return false;
-            }
-            // Read the memory completely from the buffer.
-            ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
-            if (len != main_ram->used_length) {
-                error_setg(errp, "Could not read the memory completely");
-                ret = -2;
-                if (len < 0) {
-                    ret = len;
-                }
-
-                goto err_drain;
-            }
+    if (is_incremental && !IS_ON_DEMAND_LOADING) {
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_start);
+        if (is_raw_incremental) {
+            ret = raw_ckpt_load_bulk(name, main_ram->host,
+                                     main_ram->used_length, errp);
+        } else {
+            ret = bxdb_ckpt_load_bulk(name, main_ram->host,
+                                      main_ram->used_length, errp);
         }
-
-        if (is_incremental_delta) {
-            char loc_file[300];
-            snprintf(loc_file, sizeof(loc_file), "%s.loc", name);
-            FILE *loc_file_fd = fopen(loc_file, "rb");
-            
-            if (!loc_file_fd) {
-                error_setg(errp, "Could not open the location file");
-                ret = -2;
-                goto err_drain;
-            }
-
-            // allocate the page location table.
-            if (incremental_snapshot_context.page_location != NULL) {
-                g_hash_table_destroy(incremental_snapshot_context.page_location);
-            }
-            incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
-
-            deserialize_incremental_loc_file(
-                loc_file_fd, 
-                incremental_snapshot_context.base_name, 
-                sizeof(incremental_snapshot_context.base_name), 
-                &incremental_snapshot_context.index,
-                incremental_snapshot_context.page_location
-            );
-            fclose(loc_file_fd);
-
-            // First, we need to load the base memory.
-            {
-                char base_mem_file[300];
-                snprintf(base_mem_file, sizeof(base_mem_file), "%s.mem/base", incremental_snapshot_context.base_name);
-                QEMUFile *f = qemu_file_open_input(base_mem_file, errp);
-                if (!f) {
-                    error_setg(errp, "Could not open the base memory file");
-                    ret = -2;
-                    goto err_drain;
-                }
-
-                // Read the memory completely from the buffer.
-                ssize_t len = qemu_get_buffer(f, memory_addr_to_load, main_ram->used_length);
-                if (len != main_ram->used_length) {
-                    error_setg(errp, "Could not read the memory completely");
-                    ret = -2;
-                    if (len < 0) {
-                        ret = len;
-                    }
-
-                    goto err_drain;
-                }
-                qemu_fclose(f);
-            }
-            
-            // Now we need to load the delta memory.
-            // We need to group the pages by their file number.
-            // file_number -> [(page_number, offset)]
-            struct page_number_and_offset_t {
-                uint64_t offset_in_memory;
-                uint64_t offset_in_file;
-            };
-
-            GHashTable *page_location_grouped = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
-
-            {
-                GHashTableIter iter;
-                gpointer key, value;
-                g_hash_table_iter_init(&iter, incremental_snapshot_context.page_location);
-                while (g_hash_table_iter_next(&iter, &key, &value)) {
-                    struct page_location_pair_t *info = value;
-                    GArray *array = g_hash_table_lookup(page_location_grouped, GINT_TO_POINTER(info->which_file));
-                    if (!array) {
-                        array = g_array_new(FALSE, FALSE, sizeof(struct page_number_and_offset_t));
-                        g_hash_table_insert(page_location_grouped, GINT_TO_POINTER(info->which_file), array);
-                    }
-                    struct page_number_and_offset_t *page_info = g_new(struct page_number_and_offset_t, 1);
-                    page_info->offset_in_memory = (uint64_t)key;
-                    page_info->offset_in_file = info->file_offset;
-                    g_array_append_vals(array, page_info, 1);
-                }
-            }
-            
-            // Now, we open each file, and read the page in the file.
-            {
-                GHashTableIter iter;
-                gpointer key, value;
-                g_hash_table_iter_init(&iter, page_location_grouped);
-                while (g_hash_table_iter_next(&iter, &key, &value)) {
-                    uint64_t file_number = (uint64_t)key;
-                    GArray *array = value;
-
-                    char delta_file_name[300];
-                    snprintf(delta_file_name, sizeof(delta_file_name), "%s.mem/%lu", incremental_snapshot_context.base_name, file_number);
-
-                    FILE *delta_file = fopen(delta_file_name, "rb");
-                    if (!delta_file) {
-                        error_setg(errp, "Could not open the delta file");
-                        ret = -2;
-                        goto err_drain;
-                    }
-
-                    // Read the memory completely from the buffer.
-                    for (uint64_t i = 0; i < array->len; ++i) {
-                        struct page_number_and_offset_t *page_info = &g_array_index(array, struct page_number_and_offset_t, i);
-                        if (page_info->offset_in_memory == 8704 * qemu_target_page_size()) {
-                            printf("Catching page %lu from file %s with offset = %lu \n", page_info->offset_in_memory, delta_file_name, page_info->offset_in_file);
-                            puts("Catching page\n");
-                        }
-
-                        fseeko(delta_file, page_info->offset_in_file, SEEK_SET);
-                        ssize_t len = fread(memory_addr_to_load + (page_info->offset_in_memory), qemu_target_page_size(), 1, delta_file);
-                        if (len != 1) {
-                            error_setg(errp, "Could not read the memory completely");
-                            ret = -2;
-                            if (len < 0) {
-                                ret = len;
-                            }
-
-                            fclose(delta_file);
-                            goto err_drain;
-                        }
-                    }
-                    fclose(delta_file);
-
-                    // We can free the array now.
-                    g_array_free(array, TRUE);
-                }
-
-                g_hash_table_destroy(page_location_grouped);
-            }
-
-            // Now, we may want to verify the memory as well.
-            {
-                struct RAMBlock *main_ram = get_main_memory();
-                char aux_file_name[300];
-                snprintf(aux_file_name, sizeof(aux_file_name), "%s-%s.auxmem.zstd", sn.name, "mach-virt.ram");
-                if (g_file_test(aux_file_name, G_FILE_TEST_IS_REGULAR)) {
-                    QEMUFile *f = qemu_file_open_zstd_input(aux_file_name, errp);
-                    if (!f) {
-                        error_setg(errp, "Could not open VM state file");
-                        return false;
-                    }
-
-                    qemu_log("Verifying the memory...\n");
-                    uint8_t *incoming_page = g_new(uint8_t, qemu_target_page_size());
-                    // Read page by page and compare.
-                    for (uint64_t i = 0; i < main_ram->used_length / qemu_target_page_size(); ++i) {
-                        uint8_t *page = memory_addr_to_load + i * qemu_target_page_size();
-                        ssize_t len = qemu_get_buffer(f, incoming_page, qemu_target_page_size());
-                        if (len != qemu_target_page_size()) {
-                            error_setg(errp, "Could not read the memory completely");
-                            ret = -2;
-                            if (len < 0) {
-                                ret = len;
-                            }
-
-                            goto err_drain;
-                        }
-                        if (memcmp(page, incoming_page, qemu_target_page_size()) != 0) {
-                            qemu_log("The memory is not verified at position: %lu\n", i);
-                            error_setg(errp, "The memory is not verified");
-                            ret = -2;
-                            goto err_drain;
-                        }
-                    }
-
-                    qemu_log("The memory is verified.\n");
-                }
-            }
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_end);
+        if (ret < 0) {
+            goto err_drain;
         }
     }
 
-    if (is_incremental_base || is_incremental_delta) {
-        // We need to make the main memory not migratable.
+    if (!is_incremental) {
+        char mem_file_name[300];
+        snprintf(mem_file_name, sizeof(mem_file_name), "%s.mem", sn.name);
+        if (g_file_test(mem_file_name, G_FILE_TEST_IS_REGULAR)) {
+            int mem_fd;
+            off_t file_size;
+
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_start);
+
+            mem_fd = open(mem_file_name, O_RDONLY);
+            if (mem_fd < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not open .mem file '%s'",
+                                 mem_file_name);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            file_size = lseek(mem_fd, 0, SEEK_END);
+            if (file_size < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not seek .mem file '%s'",
+                                 mem_file_name);
+                close(mem_fd);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            assert((uint64_t)file_size == main_ram->used_length);
+
+            if (lseek(mem_fd, 0, SEEK_SET) < 0) {
+                error_setg_errno(errp, errno,
+                                 "Could not seek .mem file '%s'",
+                                 mem_file_name);
+                close(mem_fd);
+                ret = -EIO;
+                goto err_drain;
+            }
+
+            {
+                size_t remaining = (size_t)file_size;
+                uint8_t *dst = main_ram->host;
+                while (remaining > 0) {
+                    ssize_t n = read(mem_fd, dst, remaining);
+                    if (n < 0) {
+                        error_setg_errno(errp, errno,
+                                         "Failed to read .mem file '%s'",
+                                         mem_file_name);
+                        close(mem_fd);
+                        ret = -EIO;
+                        goto err_drain;
+                    }
+                    if (n == 0) {
+                        error_setg(errp,
+                                   "Unexpected EOF reading .mem file '%s'",
+                                   mem_file_name);
+                        close(mem_fd);
+                        ret = -EIO;
+                        goto err_drain;
+                    }
+                    dst += n;
+                    remaining -= (size_t)n;
+                }
+            }
+
+            close(mem_fd);
+
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t_mem_end);
+        }
+    }
+
+    if (is_incremental) {
+        /* Keep main memory out of live migration while it is backed by bxdb. */
         pause_snapshotting_main_memory(true);
     }
 
@@ -3722,29 +3753,25 @@ bool load_snapshot(const char *name, const char *vmstate,
     ret = qemu_loadvm_state(f);
     migration_incoming_state_destroy();
 
-    if (is_incremental_base || is_incremental_delta) {
-        // We need to make the main memory not migratable.
+    if (is_incremental) {
         pause_snapshotting_main_memory(false);
     }
 
     get_main_memory()->mr->dirty_log_mask |= (1 << DIRTY_MEMORY_MIGRATION); // this is needed for tracking I/O device writes.
 
-    if (is_incremental_base || is_incremental_delta) {
-        // We need to clean the dirty bitmap after loading the snapshot.
-        struct RAMBlock *main_ram = get_main_memory();
-        MemoryRegion *mr = main_ram->mr;
-        g_free(memory_region_snapshot_and_clear_dirty(mr, 0, main_ram->used_length, DIRTY_MEMORY_MIGRATION));
-
-        if (is_incremental_base) {
-            // set up the incremental snapshot context from scratch.
-            if (incremental_snapshot_context.page_location != NULL) {
-                g_hash_table_destroy(incremental_snapshot_context.page_location);
-            }
-            incremental_snapshot_context.page_location = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
-            strcpy(incremental_snapshot_context.base_name, sn.name);
-            incremental_snapshot_context.index = 0;
-        }
+    if (is_incremental) {
+        /* Clear the dirty bitmap after load; the next save_delta starts fresh. */
+        struct RAMBlock *main_ram_c = get_main_memory();
+        MemoryRegion *mr = main_ram_c->mr;
+        g_free(memory_region_snapshot_and_clear_dirty(mr, 0, main_ram_c->used_length, DIRTY_MEMORY_MIGRATION));
     }
+
+    // Ask the plugin to load the snapshot.
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_uarch_start);
+    if (pf_loadvm_cb) {
+        pf_loadvm_cb(sn.name);
+    }
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t_uarch_end);
 
     aio_context_release(aio_context);
 
@@ -3753,6 +3780,20 @@ bool load_snapshot(const char *name, const char *vmstate,
     if (ret < 0) {
         error_setg(errp, "Error %d while loading VM state", ret);
         return false;
+    }
+
+    {
+        struct timespec t_now;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &t_now);
+        uint64_t total_ns = (t_now.tv_sec - t_total_start.tv_sec) * 1000000000LL
+                          + (t_now.tv_nsec - t_total_start.tv_nsec);
+        uint64_t mem_ns = (t_mem_end.tv_sec - t_mem_start.tv_sec) * 1000000000LL
+                        + (t_mem_end.tv_nsec - t_mem_start.tv_nsec);
+        uint64_t uarch_ns = (t_uarch_end.tv_sec - t_uarch_start.tv_sec) * 1000000000LL
+                          + (t_uarch_end.tv_nsec - t_uarch_start.tv_nsec);
+        g_timing_info.total_load_time_ns += total_ns;
+        g_timing_info.load_memory_state_time_ns += mem_ns;
+        g_timing_info.load_uarch_state_time_ns += uarch_ns;
     }
 
     return true;
@@ -3851,7 +3892,7 @@ static void snapshot_save_job_bh(void *opaque)
 
     job_progress_set_remaining(&s->common, 1);
     s->ret = save_snapshot(s->tag, false, s->vmstate,
-                           true, s->devices, s->errp);
+                           true, s->devices, SNAPSHOT_FORMAT_EXTERNAL_ZSTD, s->errp);
     job_progress_update(&s->common, 1);
 
     qmp_snapshot_job_free(s);

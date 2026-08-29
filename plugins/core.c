@@ -29,6 +29,7 @@
 #include "tcg/tcg-op.h"
 #include "plugin.h"
 #include "qemu/compiler.h"
+#include "migration/bxdb_checkpoint.h"
 
 struct qemu_plugin_cb {
     struct qemu_plugin_ctx *ctx;
@@ -485,6 +486,12 @@ void qemu_plugin_register_atexit_cb(qemu_plugin_id_t id,
                                     void *udata)
 {
     plugin_register_cb_udata(id, QEMU_PLUGIN_EV_ATEXIT, cb, udata);
+}
+
+void qemu_plugin_on_exit(qemu_plugin_id_t id)
+{
+    (void)id;
+    bxdb_ckpt_shutdown();
 }
 
 /*

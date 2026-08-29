@@ -18,9 +18,11 @@
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
 #include "block/block_int.h"
+#include "qemu/plugin-pf.h"
 #include "trace.h"
 #include "hw/block/block.h"
 #include "hw/qdev-properties.h"
+#include "hw/core/cpu.h"
 #include "sysemu/blockdev.h"
 #include "sysemu/block-ram-registrar.h"
 #include "sysemu/sysemu.h"
@@ -135,6 +137,8 @@ static void virtio_blk_rw_complete(void *opaque, int ret)
         virtio_blk_free_request(req);
     }
     aio_context_release(blk_get_aio_context(s->conf.conf.blk));
+
+    record_statistics_to_plugin(0, 2, 1);
 }
 
 static void virtio_blk_flush_complete(void *opaque, int ret)
@@ -1000,10 +1004,16 @@ static int virtio_blk_handle_request(VirtIOBlockReq *req, MultiReqBuffer *mrb)
             qemu_iovec_init_external(&req->qiov, out_iov, out_num);
             trace_virtio_blk_handle_write(vdev, req, req->sector_num,
                                           req->qiov.size / BDRV_SECTOR_SIZE);
+
+            uint64_t core_id = current_cpu ? current_cpu->cpu_index : 0;
+            record_statistics_to_plugin(core_id, 1, 1);
         } else {
             qemu_iovec_init_external(&req->qiov, in_iov, in_num);
             trace_virtio_blk_handle_read(vdev, req, req->sector_num,
                                          req->qiov.size / BDRV_SECTOR_SIZE);
+
+            uint64_t core_id = current_cpu ? current_cpu->cpu_index : 0;
+            record_statistics_to_plugin(core_id, 0, 1);
         }
 
         if (!virtio_blk_sect_range_ok(s, req->sector_num, req->qiov.size)) {

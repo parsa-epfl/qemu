@@ -1347,6 +1347,18 @@ if not get_option('libssh').auto() or have_block
                     required: get_option('libssh'))
 endif
 
+bxdb = not_found
+if get_option('bxdb_path') != ''
+  bxdb_path = get_option('bxdb_path')
+  bxdb_lib = cc.find_library('bxdb',
+                             dirs: [bxdb_path / 'target' / 'release'],
+                             required: true)
+  bxdb = declare_dependency(
+    dependencies: bxdb_lib,
+    include_directories: include_directories(bxdb_path / 'c-test'),
+  )
+endif
+
 libbzip2 = not_found
 if not get_option('bzip2').auto() or have_block
   libbzip2 = cc.find_library('bz2', has_headers: ['bzlib.h'],
@@ -2147,6 +2159,7 @@ config_host_data.set('CONFIG_LIBDAXCTL', libdaxctl.found())
 config_host_data.set('CONFIG_LIBISCSI', libiscsi.found())
 config_host_data.set('CONFIG_LIBNFS', libnfs.found())
 config_host_data.set('CONFIG_LIBSSH', libssh.found())
+config_host_data.set('CONFIG_BXDB', bxdb.found())
 config_host_data.set('CONFIG_LINUX_AIO', libaio.found())
 config_host_data.set('CONFIG_LINUX_IO_URING', linux_io_uring.found())
 config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
@@ -4359,6 +4372,7 @@ summary_info += {'seccomp support':   seccomp}
 summary_info += {'GlusterFS support': glusterfs}
 summary_info += {'TPM support':       have_tpm}
 summary_info += {'libssh support':    libssh}
+summary_info += {'bxdb support':      bxdb}
 summary_info += {'lzo support':       lzo}
 summary_info += {'snappy support':    snappy}
 summary_info += {'bzip2 support':     libbzip2}

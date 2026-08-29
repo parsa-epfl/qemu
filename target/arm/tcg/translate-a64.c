@@ -18,6 +18,7 @@
  */
 #include "qemu/osdep.h"
 
+#include "tcg/tcg.h"
 #include "translate.h"
 #include "translate-a64.h"
 #include "qemu/log.h"
@@ -1402,15 +1403,32 @@ static inline AArch64DecodeFn *lookup_disas_fn(const AArch64DecodeTable *table,
 static bool trans_B(DisasContext *s, arg_i *a)
 {
     reset_btype(s);
+    // PF code
+    TCGv_i64 pc_back_up = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, pc_back_up, 0);
+    TCGv_i64 target = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target, a->imm);
+    gen_helper_pf_branch_resolved(cpu_env, pc_back_up, target, tcg_constant_i32((2 << 1) + 1)); // unconditional branch
+    // End of PF code
     gen_goto_tb(s, 0, a->imm);
+    // PF code
     return true;
 }
 
 static bool trans_BL(DisasContext *s, arg_i *a)
 {
+    // PF code
+    TCGv_i64 pc_back_up = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, pc_back_up, 0);
+    TCGv_i64 target = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target, a->imm);
+    gen_helper_pf_branch_resolved(cpu_env, pc_back_up, target, tcg_constant_i32((3 << 1) + 1)); // direct call
+    // End of PF code
+
     gen_pc_plus_diff(s, cpu_reg(s, 30), curr_insn_len(s));
     reset_btype(s);
     gen_goto_tb(s, 0, a->imm);
+
     return true;
 }
 
@@ -1423,11 +1441,26 @@ static bool trans_CBZ(DisasContext *s, arg_cbz *a)
     tcg_cmp = read_cpu_reg(s, a->rt, a->sf);
     reset_btype(s);
 
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    // End of PF code
+
     match = gen_disas_label(s);
     tcg_gen_brcondi_i64(a->nz ? TCG_COND_NE : TCG_COND_EQ,
                         tcg_cmp, 0, match.label);
+    // PF code
+    TCGv_i64 target_nt = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target_nt, 4);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, target_nt, tcg_constant_i32((1 << 1) + 0)); // conditional branch, not taken
+    // End of PF code
     gen_goto_tb(s, 0, 4);
     set_disas_label(s, match);
+    // PF code
+    TCGv_i64 target_t = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target_t, a->imm);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, target_t, tcg_constant_i32((1 << 1) + 1)); // conditional branch, taken
+    // End of PF code
     gen_goto_tb(s, 1, a->imm);
     return true;
 }
@@ -1442,11 +1475,26 @@ static bool trans_TBZ(DisasContext *s, arg_tbz *a)
 
     reset_btype(s);
 
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    // End of PF code
+
     match = gen_disas_label(s);
     tcg_gen_brcondi_i64(a->nz ? TCG_COND_NE : TCG_COND_EQ,
                         tcg_cmp, 0, match.label);
+    // PF code
+    TCGv_i64 target_nt = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target_nt, 4);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, target_nt, tcg_constant_i32((1 << 1) + 0)); // conditional branch, not taken
+    // End of PF code
     gen_goto_tb(s, 0, 4);
     set_disas_label(s, match);
+    // PF code
+    TCGv_i64 target_t = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, target_t, a->imm);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, target_t, tcg_constant_i32((1 << 1) + 1)); // conditional branch, taken
+    // End of PF code
     gen_goto_tb(s, 1, a->imm);
     return true;
 }
@@ -1454,15 +1502,36 @@ static bool trans_TBZ(DisasContext *s, arg_tbz *a)
 static bool trans_B_cond(DisasContext *s, arg_B_cond *a)
 {
     reset_btype(s);
+
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    // End of PF code
+
     if (a->cond < 0x0e) {
         /* genuinely conditional branches */
         DisasLabel match = gen_disas_label(s);
         arm_gen_test_cc(a->cond, match.label);
+        // PF code
+        TCGv_i64 target_nt = tcg_temp_new_i64();
+        gen_pc_plus_diff(s, target_nt, 4);
+        gen_helper_pf_branch_resolved(cpu_env, current_pc, target_nt, tcg_constant_i32((1 << 1) + 0)); // conditional branch, not taken
+        // End of PF code
         gen_goto_tb(s, 0, 4);
         set_disas_label(s, match);
+        // PF code
+        TCGv_i64 target_t = tcg_temp_new_i64();
+        gen_pc_plus_diff(s, target_t, a->imm);
+        gen_helper_pf_branch_resolved(cpu_env, current_pc, target_t, tcg_constant_i32((1 << 1) + 1)); // conditional branch, taken
+        // End of PF code
         gen_goto_tb(s, 1, a->imm);
     } else {
         /* 0xe and 0xf are both "always" conditions */
+        // PF code
+        TCGv_i64 target_t = tcg_temp_new_i64();
+        gen_pc_plus_diff(s, target_t, a->imm);
+        gen_helper_pf_branch_resolved(cpu_env, current_pc, target_t, tcg_constant_i32((2 << 1) + 1)); // unconditional branch
+        // End of PF code
         gen_goto_tb(s, 0, a->imm);
     }
     return true;
@@ -1486,6 +1555,12 @@ static void set_btype_for_blr(DisasContext *s)
 
 static bool trans_BR(DisasContext *s, arg_r *a)
 {
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, cpu_reg(s, a->rn), tcg_constant_i32((4 << 1) + 1)); // indirect branch
+    // End of PF code
     gen_a64_set_pc(s, cpu_reg(s, a->rn));
     set_btype_for_br(s, a->rn);
     s->base.is_jmp = DISAS_JUMP;
@@ -1502,6 +1577,11 @@ static bool trans_BLR(DisasContext *s, arg_r *a)
         dst = tmp;
     }
     gen_pc_plus_diff(s, lr, curr_insn_len(s));
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((5 << 1) + 1)); // indirect call
+    // End of PF code
     gen_a64_set_pc(s, dst);
     set_btype_for_blr(s);
     s->base.is_jmp = DISAS_JUMP;
@@ -1510,6 +1590,11 @@ static bool trans_BLR(DisasContext *s, arg_r *a)
 
 static bool trans_RET(DisasContext *s, arg_r *a)
 {
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, cpu_reg(s, a->rn), tcg_constant_i32((6 << 1) + 1)); // return
+    // End of PF code
     gen_a64_set_pc(s, cpu_reg(s, a->rn));
     s->base.is_jmp = DISAS_JUMP;
     return true;
@@ -1546,6 +1631,11 @@ static bool trans_BRAZ(DisasContext *s, arg_braz *a)
     }
 
     dst = auth_branch_target(s, cpu_reg(s, a->rn), tcg_constant_i64(0), !a->m);
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((4 << 1) + 1)); // indirect branch
+    // End of PF code
     gen_a64_set_pc(s, dst);
     set_btype_for_br(s, a->rn);
     s->base.is_jmp = DISAS_JUMP;
@@ -1568,6 +1658,11 @@ static bool trans_BLRAZ(DisasContext *s, arg_braz *a)
         dst = tmp;
     }
     gen_pc_plus_diff(s, lr, curr_insn_len(s));
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((5 << 1) + 1)); // indirect call
+    // End of PF code
     gen_a64_set_pc(s, dst);
     set_btype_for_blr(s);
     s->base.is_jmp = DISAS_JUMP;
@@ -1579,6 +1674,11 @@ static bool trans_RETA(DisasContext *s, arg_reta *a)
     TCGv_i64 dst;
 
     dst = auth_branch_target(s, cpu_reg(s, 30), cpu_X[31], !a->m);
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((6 << 1) + 1)); // return
+    // End of PF code
     gen_a64_set_pc(s, dst);
     s->base.is_jmp = DISAS_JUMP;
     return true;
@@ -1592,6 +1692,11 @@ static bool trans_BRA(DisasContext *s, arg_bra *a)
         return false;
     }
     dst = auth_branch_target(s, cpu_reg(s,a->rn), cpu_reg_sp(s, a->rm), !a->m);
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((4 << 1) + 1)); // indirect branch
+    // End of PF code
     gen_a64_set_pc(s, dst);
     set_btype_for_br(s, a->rn);
     s->base.is_jmp = DISAS_JUMP;
@@ -1613,6 +1718,11 @@ static bool trans_BLRA(DisasContext *s, arg_bra *a)
         dst = tmp;
     }
     gen_pc_plus_diff(s, lr, curr_insn_len(s));
+    // PF code
+    TCGv_i64 current_pc = tcg_temp_new_i64();
+    gen_pc_plus_diff(s, current_pc, 0);
+    gen_helper_pf_branch_resolved(cpu_env, current_pc, dst, tcg_constant_i32((5 << 1) + 1)); // indirect call
+    // End of PF code
     gen_a64_set_pc(s, dst);
     set_btype_for_blr(s);
     s->base.is_jmp = DISAS_JUMP;
