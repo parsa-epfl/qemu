@@ -2931,22 +2931,8 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     
     assert (false && "DO NOT SUPPORT CHECKPOINTING FOR KNOTTYKRAKEN YET.\n");
     printf("save_snapshot called with name=%s with number of inflight messages %d \n", name, pdes_inflight_count());
-    PDESEngine *engine = get_singleton_engine();
     // TODO Need a cleaner way to force all savevms to go to boundry
-    if (engine!= NULL){
-        if (!engine->needs_to_checkpoint){
-            engine->needs_to_checkpoint = true;
-            // Copy the name
-            snprintf(engine->checkpoint_name, sizeof(engine->checkpoint_name), "%s", name ? name : "snapshot");
-            // Copy the format
-            engine->notified_neighbors = false;
-            // WWT specific
-            PDESWWT *wwt = get_singleton_wwt_engine();
-            engine->checkpoint_quantum_round = wwt->current_quantum_round;
-            engine->notified_neighbors=false;
-
-        }
-    }
+    pdes_savevm_defer(name, format);
 
     bool validate = validate_checkpoint(&name);
     if (!validate){
@@ -3017,9 +3003,9 @@ bool save_snapshot(const char *name, bool overwrite, const char *vmstate,
     
     // Make sure you send and recieve everything that has been passed.
     // Based on the sync logic it should be ok if something is processed in between still 
-    if (engine != NULL) {
+    if (pdes_link_count() > 0) {
         printf("Draining PDESEngine before snapshot\n");
-        int drain_res = pdes_drain(engine, name, format);
+        int drain_res = pdes_drain(name, format);
         if (drain_res < 0){
             printf("Failed to drain PDESEngine before snapshot, error code %d\n", drain_res);
             return false;
@@ -3329,7 +3315,6 @@ static void *uffd_on_demand_thread(void *main_ram) {
 bool load_snapshot(const char *name, const char *vmstate,
                    bool has_devices, strList *devices, int on_demand, Error **errp)
 {
-    PDESEngine *engine = get_singleton_engine();
     BlockDriverState *bs_vm_state;
     QEMUSnapshotInfo sn;
     QEMUFile *f;
@@ -3385,10 +3370,9 @@ bool load_snapshot(const char *name, const char *vmstate,
         return false;
     }
 
-    if (engine != NULL){
+    if (pdes_link_count() > 0){
         // TODO make this usable by any strategy
-        PDESWWT *wwt_engine = get_singleton_wwt_engine();
-        int ret = pdes_inflight_restore_and_schedule(name, wwt_engine->recv_cb, wwt_engine->recv_opaque);
+        int ret = pdes_engine_restore_inflight(name);
         if (ret < 0) {
             error_setg(errp, "Failed to restore in-flight operations for the snapshot");
             return false;

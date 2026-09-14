@@ -67,6 +67,7 @@ subdir('can')
 system_ss.add(files(
   '../../qemu-pdes/net/pdes-communicator.c',
   '../../qemu-pdes/net/pdes-engine.c',
+  '../../qemu-pdes/net/pdes-link.c',
   '../../qemu-pdes/net/pdes-netdev.c',
   '../../qemu-pdes/net/pdes-wwt.c',
   '../../qemu-pdes/net/pdes-utility.c',

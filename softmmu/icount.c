@@ -339,11 +339,7 @@ void icount_start_warp_timer(void)
         // idle while single-node, stepping via its phantom, does). Gate on "Flexus attached" — not on
         // "!is_paused()" which left the paused / quanta_sync transient able to warp. Step, don't skip.
         bool flexus_attached = (flexus_api.is_paused != NULL);
-        bool pdes_paused = false;
-        PDESEngine* engine = get_singleton_engine();
-        if (engine != NULL) {
-            pdes_paused = qatomic_read(&engine->paused);
-        }
+        bool pdes_paused = pdes_engine_paused();
         if (!all_cpu_threads_idle()) {
             return;
         }
