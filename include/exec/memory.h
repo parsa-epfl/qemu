@@ -1157,6 +1157,12 @@ static inline bool MemoryRegionSection_eq(MemoryRegionSection *a,
            a->nonvolatile == b->nonvolatile;
 }
 
+struct DirtyBitmapSnapshot {
+    ram_addr_t start;
+    ram_addr_t end;
+    unsigned long dirty[];
+};
+
 /**
  * memory_region_section_new_copy: Copy a memory region section
  *

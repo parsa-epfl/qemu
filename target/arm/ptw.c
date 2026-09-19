@@ -71,7 +71,6 @@ typedef struct S1Translate {
      */
     bool in_s1_is_el0;
     bool out_secure;
-    bool out_rw;
     bool out_be;
     ARMSecuritySpace out_space;
     hwaddr out_virt;
@@ -547,7 +546,6 @@ static bool S1_ptw_translate(CPUARMState *env, S1Translate *ptw,
         ptw->out_phys = s2.f.phys_addr;
         pte_attrs = s2.cacheattrs.attrs;
         ptw->out_host = NULL;
-        ptw->out_rw = false;
         ptw->out_secure = s2.f.attrs.secure;
         ptw->out_space = s2.f.attrs.space;
     } else {
@@ -565,7 +563,6 @@ static bool S1_ptw_translate(CPUARMState *env, S1Translate *ptw,
             goto fail;
         }
         ptw->out_phys = full->phys_addr | (addr & ~TARGET_PAGE_MASK);
-        ptw->out_rw = full->prot & PAGE_WRITE;
         pte_attrs = full->pte_attrs;
         ptw->out_secure = full->attrs.secure;
         ptw->out_space = full->attrs.space;
@@ -708,15 +705,20 @@ static uint64_t arm_casq_ptw(CPUARMState *env, uint64_t old_val,
     /*
      * Raising a stage2 Protection fault for an atomic update to a read-only
      * page is delayed until it is certain that there is a change to make.
+     *
+     * Always probe with MMU_DATA_STORE before writing back to guest memory.
+     * This ensures the TLB write-side NOTDIRTY flag is checked and the
+     * migration dirty bitmap is updated.  The probe is cheap: the host
+     * pointer was already resolved in S1_ptw_translate via MMU_DATA_LOAD.
      */
-    if (unlikely(!ptw->out_rw)) {
+    {
         int flags;
 
         env->tlb_fi = fi;
         flags = probe_access_full_mmu(env, ptw->out_virt, 0,
-                                      MMU_DATA_STORE,
-                                      arm_to_core_mmu_idx(ptw->in_ptw_idx),
-                                      NULL, NULL);
+                                       MMU_DATA_STORE,
+                                       arm_to_core_mmu_idx(ptw->in_ptw_idx),
+                                       NULL, NULL);
         env->tlb_fi = NULL;
 
         if (unlikely(flags & TLB_INVALID_MASK)) {
@@ -727,9 +729,6 @@ static uint64_t arm_casq_ptw(CPUARMState *env, uint64_t old_val,
             fi->s1ns = !ptw->in_secure;
             return 0;
         }
-
-        /* In case CAS mismatches and we loop, remember writability. */
-        ptw->out_rw = true;
     }
 
 #ifdef CONFIG_ATOMIC64

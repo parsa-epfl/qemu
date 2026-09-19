@@ -9,6 +9,8 @@ meson_options_help() {
   printf "%s\n" '  --block-drv-rw-whitelist=VALUE'
   printf "%s\n" '                           set block driver read-write whitelist (by default'
   printf "%s\n" '                           affects only QEMU, not tools like qemu-img)'
+  printf "%s\n" '  --bxdb-path=VALUE        Path to bxdb source tree (enables incremental'
+  printf "%s\n" '                           checkpoint backend)'
   printf "%s\n" '  --datadir=VALUE          Data file directory [share]'
   printf "%s\n" '  --disable-coroutine-pool coroutine freelist (better performance)'
   printf "%s\n" '  --disable-debug-info     Enable debug symbols and other information'
@@ -156,7 +158,6 @@ meson_options_help() {
   printf "%s\n" '  rbd             Ceph block device driver'
   printf "%s\n" '  rdma            Enable RDMA-based migration'
   printf "%s\n" '  replication     replication support'
-  printf "%s\n" '  rutabaga-gfx    rutabaga_gfx support'
   printf "%s\n" '  sdl             SDL user interface'
   printf "%s\n" '  sdl-image       SDL Image support for icons'
   printf "%s\n" '  seccomp         seccomp support'
@@ -240,6 +241,7 @@ _meson_option_parse() {
     --disable-bpf) printf "%s" -Dbpf=disabled ;;
     --enable-brlapi) printf "%s" -Dbrlapi=enabled ;;
     --disable-brlapi) printf "%s" -Dbrlapi=disabled ;;
+    --bxdb-path=*) quote_sh "-Dbxdb_path=$2" ;;
     --enable-bzip2) printf "%s" -Dbzip2=enabled ;;
     --disable-bzip2) printf "%s" -Dbzip2=disabled ;;
     --enable-canokey) printf "%s" -Dcanokey=enabled ;;
