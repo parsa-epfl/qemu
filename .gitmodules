@@ -46,6 +46,4 @@
 [submodule "libqflex"]
 	path = middleware
 	url = https://github.com/parsa-epfl/libqflex.git
-	branch = fix/default_frequency
-[submodule "middleware"]
 	branch = develop
