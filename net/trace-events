@@ -23,3 +23,8 @@ colo_compare_tcp_info(const char *pkt, uint32_t seq, uint32_t ack, int hdlen, in
 # filter-rewriter.c
 colo_filter_rewriter_pkt_info(const char *func, const char *src, const char *dst, uint32_t seq, uint32_t ack, uint32_t flag) "%s: src/dst: %s/%s p: seq/ack=%u/%u  flags=0x%x"
 colo_filter_rewriter_conn_offset(uint32_t offset) ": offset=%u"
+
+# ../../qemu-pdes/net (pdes-wwt.c, pdes-utility.c, pdes-engine.c)
+pdes_link_tx(int link, size_t len, int64_t vt) "link=%d len=%zu vt=%" PRId64
+pdes_link_rx(int link, size_t len, int64_t vt) "link=%d len=%zu vt=%" PRId64
+pdes_link_stats(int link, const char *shm_send, uint64_t tx_frames, uint64_t tx_bytes, uint64_t rx_frames, uint64_t rx_bytes, int64_t vt) "link=%d shm=%s tx_frames=%" PRIu64 " tx_bytes=%" PRIu64 " rx_frames=%" PRIu64 " rx_bytes=%" PRIu64 " vt=%" PRId64
