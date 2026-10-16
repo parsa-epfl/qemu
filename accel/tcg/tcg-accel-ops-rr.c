@@ -440,7 +440,28 @@ out:
         qemu_notify_event();
     }
 
-    rr_wait_io_event();
+    if (qemu_libqflex_state.is_running &&
+        qemu_libqflex_state.mode == MODE_TIMING) {
+        CPUState *other_cpu;
+
+        /*
+         * Flexus owns virtual-time advancement in timing mode. Blocking
+         * here when all vCPUs are halted also blocks the Flexus tick that
+         * would deliver their wakeup interrupts. Process CPU work, but
+         * return to Flexus instead of waiting for a runnable vCPU.
+         */
+        if (all_cpu_threads_idle()) {
+            rr_stop_kick_timer();
+        } else {
+            rr_start_kick_timer();
+        }
+
+        CPU_FOREACH(other_cpu) {
+            qemu_wait_io_event_common(other_cpu);
+        }
+    } else {
+        rr_wait_io_event();
+    }
     rr_deal_with_unplugged_cpus();
 
     return r;
